@@ -1,0 +1,1875 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#081310">
+<title>ESP32 Telemetry Console</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.2.0"></script>
+<style>
+    :root {
+        --bg: #081310;
+        --bg-panel: #0d1c17;
+        --bg-panel-alt: #0a1815;
+        --bg-input: #081310;
+        --grid: rgba(69, 216, 196, .05);
+        --border: #1c3830;
+        --border-bright: #2e5c4c;
+        --copper: #d7a052;
+        --copper-bright: #f0c079;
+        --teal: #45d8c4;
+        --high: #4ade80;
+        --low: #fb7185;
+        --text: #e7f2ec;
+        --text-dim: #82998e;
+        --text-faint: #4d6259;
+        --font-display: 'Space Grotesk', 'Segoe UI', sans-serif;
+        --font-mono: 'IBM Plex Mono', 'SFMono-Regular', Menlo, monospace;
+        --radius: 6px;
+        --shadow: 0 2px 10px rgba(0,0,0,.25);
+    }
+
+    * , *::before, *::after { box-sizing: border-box; }
+
+    body {
+        margin: 0;
+        background-color: var(--bg);
+        background-image:
+            linear-gradient(var(--grid) 1px, transparent 1px),
+            linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+        background-size: 28px 28px;
+        color: var(--text);
+        font-family: var(--font-display);
+        padding: 28px 20px 60px;
+        line-height: 1.5;
+    }
+
+    :focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+
+    .container { max-width: 1440px; margin: 0 auto; }
+
+    /* ---------- Header ---------- */
+    .app-header {
+        display: flex; justify-content: space-between; align-items: center;
+        flex-wrap: wrap; gap: 16px;
+        padding-bottom: 18px; border-bottom: 1px solid var(--border);
+        margin-bottom: 18px;
+    }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .brand-mark { color: var(--copper); flex-shrink: 0; }
+    .brand h1 { font-size: 1.28rem; margin: 0; font-weight: 600; letter-spacing: -0.01em; }
+    .brand-sub { margin: 2px 0 0; font-size: .8rem; color: var(--text-dim); }
+    .header-status { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+    .clock { font-family: var(--font-mono); font-size: .92rem; color: var(--text-dim); }
+    .freshness { font-family: var(--font-mono); font-size: .72rem; color: var(--text-dim); }
+    .freshness.stale { color: var(--low); }
+    .conn-pill {
+        display: flex; align-items: center; gap: 7px;
+        font-family: var(--font-mono); font-size: .74rem; color: var(--text-dim);
+        border: 1px solid var(--border-bright); padding: 6px 12px; border-radius: 20px;
+    }
+    .led { width: 8px; height: 8px; border-radius: 50%; background: var(--text-faint); display: inline-block; }
+    .led.led-online { background: var(--teal); box-shadow: 0 0 6px 1px var(--teal); animation: breathe 2.4s ease-in-out infinite; }
+    .led.led-offline { background: var(--low); box-shadow: 0 0 6px 1px var(--low); }
+    @keyframes breathe { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
+    .icon-btn {
+        background: var(--bg-panel-alt); border: 1px solid var(--border-bright); color: var(--text-dim);
+        width: 34px; height: 34px; border-radius: 6px; cursor: pointer; font-size: 1rem; line-height: 1;
+    }
+    .icon-btn:hover { border-color: var(--copper); color: var(--copper-bright); }
+
+    /* ---------- Layout ---------- */
+    .app-layout { display: grid; grid-template-columns: 1fr; gap: 18px; align-items: start; }
+    @media (min-width: 1180px) {
+        .app-layout { grid-template-columns: minmax(0, 1fr) 360px; }
+        .side-col { position: sticky; top: 20px; max-height: calc(100vh - 40px); overflow-y: auto; padding-right: 2px; }
+    }
+    .main-col { min-width: 0; }
+    .side-col { display: flex; flex-direction: column; gap: 16px; }
+
+    /* ---------- Tabs ---------- */
+    .tabs {
+        display: flex; gap: 4px; background: var(--bg-panel-alt); border: 1px solid var(--border);
+        border-radius: 8px; padding: 4px; width: fit-content; margin: 0 0 18px;
+    }
+    .tab-btn {
+        background: transparent; border: none; color: var(--text-dim);
+        font-family: var(--font-display); font-weight: 600; font-size: .84rem;
+        padding: 8px 20px; border-radius: 5px; cursor: pointer; transition: background .15s ease, color .15s ease;
+    }
+    .tab-btn.active { background: var(--copper); color: #12100b; }
+    .tab-btn:hover:not(.active) { color: var(--text); }
+    .tab-view[hidden] { display: none !important; }
+
+    /* ---------- Panels ---------- */
+    .panel {
+        position: relative; background: var(--bg-panel); border: 1px solid var(--border);
+        border-radius: var(--radius); padding: 20px; margin-bottom: 16px; box-shadow: var(--shadow);
+    }
+    .panel::before, .panel::after { content: ""; position: absolute; width: 10px; height: 10px; pointer-events: none; }
+    .panel::before { top: -1px; left: -1px; border-top: 2px solid var(--copper); border-left: 2px solid var(--copper); }
+    .panel::after { bottom: -1px; right: -1px; border-bottom: 2px solid var(--copper); border-right: 2px solid var(--copper); }
+    .panel-title {
+        display: flex; align-items: center; justify-content: space-between; gap: 10px;
+        font-family: var(--font-mono); font-size: .76rem; color: var(--copper-bright); letter-spacing: .02em;
+        margin: 0 0 16px; padding-bottom: 10px; border-bottom: 1px solid var(--border);
+    }
+    .panel-title small { color: var(--text-faint); font-weight: 400; text-transform: none; letter-spacing: 0; }
+    .panel-subtitle { font-family: var(--font-display); font-size: .82rem; color: var(--text-dim); margin: 18px 0 10px; font-weight: 600; }
+    .status-line { font-size: .8rem; color: var(--text-dim); margin: 10px 0 0; }
+    .placeholder { color: var(--text-faint); font-size: .84rem; margin: 0; }
+    .panel-compact { padding: 16px 18px; }
+
+    .grid-2 { display: grid; grid-template-columns: 1.4fr 1fr; gap: 16px; }
+    @media (max-width: 900px) { .grid-2 { grid-template-columns: 1fr; } }
+
+    /* ---------- History controls ---------- */
+    .quick-ranges { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+    .quick-ranges button {
+        background: transparent; border: 1px solid var(--border-bright); color: var(--text-dim);
+        font-family: var(--font-mono); font-size: .75rem; padding: 7px 14px; border-radius: 4px; cursor: pointer;
+    }
+    .quick-ranges button:hover { border-color: var(--copper); color: var(--copper-bright); }
+
+    .range-inputs { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; margin-bottom: 4px; }
+    .field-label { display: flex; flex-direction: column; gap: 6px; font-size: .78rem; color: var(--text-dim); }
+
+    input[type="datetime-local"], input[type="text"], input[type="number"], input[type="search"], input[type="time"], select {
+        background: var(--bg-input); border: 1px solid var(--border-bright); color: var(--text);
+        font-family: var(--font-mono); padding: 8px 10px; border-radius: 4px; font-size: .82rem;
+    }
+
+    .btn-primary, .btn-ghost {
+        font-family: var(--font-display); font-weight: 600; font-size: .82rem;
+        padding: 9px 18px; border-radius: 4px; cursor: pointer;
+    }
+    .btn-primary { background: var(--copper); color: #12100b; border: none; }
+    .btn-primary:hover { background: var(--copper-bright); }
+    .btn-ghost { background: transparent; border: 1px solid var(--border-bright); color: var(--text-dim); }
+    .btn-ghost:hover:not(:disabled) { border-color: var(--teal); color: var(--teal); }
+    .btn-ghost:disabled { opacity: .4; cursor: not-allowed; }
+    .btn-sm { padding: 5px 10px; font-size: .7rem; }
+    .btn-danger { border-color: #fb7185 !important; color: #fb7185 !important; }
+
+    .replay-transport { margin-top: 4px; }
+    .transport-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .btn-icon {
+        background: var(--bg-panel-alt); border: 1px solid var(--border-bright); color: var(--text);
+        width: 38px; height: 38px; border-radius: 4px; cursor: pointer; font-size: .9rem;
+    }
+    .btn-icon:hover { border-color: var(--copper); }
+    .btn-icon.active { border-color: var(--copper); color: var(--copper-bright); }
+    .scrubber {
+        flex: 1; min-width: 140px; -webkit-appearance: none; appearance: none;
+        height: 4px; border-radius: 2px; background: var(--border-bright);
+    }
+    .scrubber::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: var(--teal); cursor: pointer; }
+    .scrubber::-moz-range-thumb { width: 14px; height: 14px; border-radius: 50%; background: var(--teal); cursor: pointer; border: none; }
+    .transport-status { display: flex; gap: 18px; margin-top: 12px; font-family: var(--font-mono); font-size: .78rem; color: var(--text-dim); flex-wrap: wrap; }
+
+    .confirm-toggle { display:inline-flex; align-items:center; gap:8px; margin:6px 0 12px; font-size:.75rem; color:var(--text-dim); }
+    .confirm-toggle input { accent-color:var(--copper); }
+    .ctrl-command { font-family:var(--font-mono); font-size:.62rem; color:var(--text-faint); min-height:14px; }
+    .ctrl-card.pending { border-color:var(--copper); box-shadow:0 0 0 1px rgba(210,160,90,.15); }
+
+    /* ---------- Stats ---------- */
+    .stat-row { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; }
+    .stat-chip { background: var(--bg-panel-alt); border: 1px solid var(--border); border-radius: 4px; padding: 10px 14px; min-width: 140px; }
+    .stat-chip .stat-label { display: block; font-family: var(--font-mono); font-size: .68rem; color: var(--text-faint); margin-bottom: 4px; }
+    .stat-chip .stat-value { font-family: var(--font-mono); font-size: 1.1rem; font-weight: 600; color: var(--copper-bright); }
+    .stat-mini-row { display: flex; gap: 10px; margin-top: 6px; }
+    .stat-mini { font-size: .66rem; color: var(--text-dim); border-left: 1px solid var(--border-bright); padding-left: 6px; }
+    .stat-mini b { color: var(--text-dim); font-weight: 600; }
+
+    /* ---------- Pin grids ---------- */
+    .pin-grid { display: flex; flex-wrap: wrap; gap: 10px; }
+    .pin-card, .ctrl-card {
+        min-width: 96px; padding: 12px 10px; border-radius: var(--radius); text-align: center;
+        border: 1px solid var(--border); background: var(--bg-panel-alt);
+        display: flex; flex-direction: column; align-items: center; gap: 6px;
+    }
+    .pin-card .pin-name, .ctrl-name { font-family: var(--font-mono); font-weight: 600; font-size: .84rem; color: var(--text); }
+    .pin-card .pin-state, .ctrl-state { font-family: var(--font-mono); font-size: .7rem; font-weight: 600; }
+    .pin-card.high .pin-state, .ctrl-state.on { color: var(--high); }
+    .pin-card.low .pin-state, .ctrl-state.off { color: var(--low); }
+    .pin-card.high { box-shadow: inset 0 0 0 1px rgba(74, 222, 128, .25); }
+    .pin-card.low { box-shadow: inset 0 0 0 1px rgba(251, 113, 133, .2); }
+    .pin-card .pin-role { font-size: .6rem; color: var(--text-faint); letter-spacing: .04em; }
+
+    .dip-toggle {
+        position: relative; width: 32px; height: 48px; border-radius: 4px;
+        border: 1px solid var(--border-bright); background: var(--bg-input); cursor: pointer;
+        padding: 3px; display: flex; flex-direction: column; justify-content: flex-end;
+    }
+    .dip-toggle .dip-knob { display: block; width: 100%; height: 20px; border-radius: 3px; background: #2a3d36; transition: background .18s ease; }
+    .dip-toggle.on { justify-content: flex-start; }
+    .dip-toggle.on .dip-knob { background: var(--high); box-shadow: 0 0 8px rgba(74, 222, 128, .5); }
+    .dip-toggle:disabled { opacity: .5; cursor: wait; }
+
+    .analog-card { min-width: 170px; padding: 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-panel-alt); text-align: center; }
+    .analog-card .ctrl-name { display: block; margin-bottom: 10px; }
+    .analog-slider {
+        -webkit-appearance: none; appearance: none; width: 100%; height: 4px; border-radius: 2px;
+        background: var(--border-bright); outline: none; margin: 10px 0;
+    }
+    .analog-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; border-radius: 3px; background: var(--copper); border: 2px solid var(--copper-bright); cursor: pointer; }
+    .analog-slider::-moz-range-thumb { width: 16px; height: 16px; border-radius: 3px; background: var(--copper); border: 2px solid var(--copper-bright); cursor: pointer; }
+    .analog-value { font-family: var(--font-mono); font-size: .76rem; color: var(--text-dim); margin-top: 6px; }
+
+    .legend-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); }
+    .legend-group { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .legend-label { font-family: var(--font-mono); font-size: .66rem; color: var(--text-faint); }
+    .chip { font-family: var(--font-mono); font-size: .66rem; padding: 2px 8px; border: 1px solid var(--border-bright); border-radius: 3px; color: var(--text-dim); }
+
+    /* ---------- Event log ---------- */
+    .event-log { list-style: none; margin: 0; padding: 0; max-height: 260px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+    .event-log::-webkit-scrollbar { width: 6px; }
+    .event-log::-webkit-scrollbar-thumb { background: var(--border-bright); border-radius: 3px; }
+    .event-row {
+        display: flex; justify-content: space-between; gap: 8px; font-family: var(--font-mono); font-size: .74rem;
+        padding: 7px 9px; border-radius: 3px; background: var(--bg-panel-alt); border-left: 2px solid var(--border-bright);
+    }
+    .event-row.high { border-left-color: var(--high); }
+    .event-row.low { border-left-color: var(--low); }
+    .event-time { color: var(--text-faint); }
+    .event-pin { color: var(--text); font-weight: 600; }
+    .event-val { color: var(--text-dim); }
+    .event-empty { color: var(--text-faint); font-size: .8rem; padding: 8px 0; }
+    .event-meta { font-size:.65rem; color:var(--text-faint); margin-left:6px; }
+
+    canvas { max-width: 100%; cursor: crosshair; }
+    .chart-wrapper { position: relative; height: 250px; width: 100%; margin-bottom: 8px; }
+    .chart-wrapper.short { height: 160px; }
+
+    /* ---------- Settings modal ---------- */
+    .modal-backdrop { position: fixed; inset: 0; background: rgba(4, 10, 8, .72); display: flex; align-items: center; justify-content: center; z-index: 99999; padding: 20px; }
+    .modal-backdrop[hidden] { display: none !important; }
+    .modal { background: var(--bg-panel); border: 1px solid var(--border-bright); border-radius: 6px; padding: 24px; max-width: 420px; width: 100%; }
+    .modal-field { display: flex; flex-direction: column; gap: 6px; font-size: .8rem; color: var(--text-dim); margin-bottom: 14px; }
+    .modal-field input { font-size: .85rem; }
+    .modal-actions { display: flex; gap: 10px; margin-top: 6px; align-items: center; }
+
+    /* ---------- Auth modal ---------- */
+    #login-modal { backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+    .auth-card {
+        position: relative; width: 100%; max-width: 400px;
+        background: linear-gradient(180deg, var(--bg-panel) 0%, var(--bg-panel-alt) 100%);
+        border: 1px solid var(--border-bright); border-radius: 14px;
+        padding: 32px 28px 26px; box-shadow: 0 24px 60px rgba(0,0,0,.5), 0 0 0 1px rgba(69,216,196,.06);
+        animation: authIn .45s cubic-bezier(.16,1,.3,1);
+    }
+    @keyframes authIn { from { opacity: 0; transform: translateY(10px) scale(.97); } to { opacity: 1; transform: none; } }
+    .auth-card::before {
+        content: ""; position: absolute; top: 0; left: 14px; right: 14px; height: 2px; border-radius: 2px;
+        background: linear-gradient(90deg, transparent, var(--copper), var(--teal), transparent);
+    }
+    .auth-header { text-align: center; margin-bottom: 24px; }
+    .auth-icon {
+        width: 50px; height: 50px; margin: 0 auto 14px; border-radius: 12px;
+        display: flex; align-items: center; justify-content: center;
+        background: var(--bg-panel-alt); border: 1px solid var(--border-bright);
+        animation: breathe 3.2s ease-in-out infinite;
+    }
+    .auth-icon svg { width: 26px; height: 26px; }
+    .auth-header h2 { margin: 0 0 4px; font-size: 1.02rem; font-weight: 600; letter-spacing: -.01em; }
+    .auth-header p { margin: 0; font-family: var(--font-mono); font-size: .74rem; color: var(--text-dim); }
+
+    .auth-section-label {
+        font-family: var(--font-mono); font-size: .68rem; color: var(--text-faint);
+        margin: 22px 0 14px; padding-top: 16px; border-top: 1px solid var(--border);
+    }
+
+    .auth-field { margin-bottom: 14px; }
+    .auth-field label {
+        display: block; font-family: var(--font-mono); font-size: .72rem; color: var(--text-dim); margin-bottom: 6px;
+    }
+    .auth-input-wrap { position: relative; display: flex; align-items: center; }
+    .auth-input-wrap .auth-input-icon {
+        position: absolute; left: 11px; width: 15px; height: 15px; color: var(--text-faint); pointer-events: none;
+    }
+    .auth-input-wrap input {
+        width: 100%; padding: 10px 12px 10px 34px; font-size: .85rem;
+        background: var(--bg-input); border: 1px solid var(--border-bright); border-radius: 7px; color: var(--text);
+        font-family: var(--font-mono); transition: border-color .15s ease, box-shadow .15s ease;
+    }
+    .auth-input-wrap input:focus { border-color: var(--teal); box-shadow: 0 0 0 3px rgba(69,216,196,.14); }
+    .auth-input-wrap.has-toggle input { padding-right: 34px; }
+    .auth-toggle-visibility {
+        position: absolute; right: 5px; width: 26px; height: 26px; display: flex; align-items: center; justify-content: center;
+        background: transparent; border: none; color: var(--text-faint); cursor: pointer; border-radius: 5px;
+    }
+    .auth-toggle-visibility:hover { color: var(--teal); }
+    .auth-toggle-visibility svg { width: 16px; height: 16px; }
+
+    .auth-error {
+        display: none; align-items: flex-start; gap: 8px; font-family: var(--font-mono); font-size: .74rem;
+        padding: 10px 12px; border-radius: 7px; margin: 4px 0 16px; line-height: 1.4;
+    }
+    .auth-error.is-error { display: flex; background: rgba(251,113,133,.08); border: 1px solid rgba(251,113,133,.35); color: var(--low); }
+    .auth-error.is-success { display: flex; background: rgba(74,222,128,.08); border: 1px solid rgba(74,222,128,.35); color: var(--high); }
+    .auth-error.is-info { display: flex; background: rgba(69,216,196,.08); border: 1px solid rgba(69,216,196,.3); color: var(--teal); }
+
+    .auth-submit {
+        width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px;
+        background: var(--copper); color: #12100b; border: none; font-family: var(--font-display); font-weight: 600;
+        font-size: .88rem; padding: 12px; border-radius: 7px; cursor: pointer; transition: background .15s ease, transform .1s ease;
+    }
+    .auth-submit:hover:not(:disabled) { background: var(--copper-bright); transform: translateY(-1px); }
+    .auth-submit:disabled { opacity: .7; cursor: wait; }
+    .auth-spinner {
+        width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0;
+        border: 2px solid rgba(18,16,11,.3); border-top-color: #12100b;
+        animation: spin .7s linear infinite; display: none;
+    }
+    .auth-submit.is-busy .auth-spinner { display: inline-block; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .auth-privacy-note {
+        display: flex; align-items: flex-start; gap: 7px; margin: 18px 0 0; font-size: .7rem;
+        color: var(--text-faint); line-height: 1.4;
+    }
+    .auth-privacy-note svg { width: 14px; height: 14px; flex-shrink: 0; margin-top: 1px; }
+
+    @media (max-width: 420px) { .auth-card { padding: 26px 20px 22px; } }
+    @media (prefers-reduced-motion: reduce) { .auth-card { animation: none; } .auth-icon { animation: none; } }
+
+    .chart-controls { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin:0 0 12px; font-size:.75rem; color:var(--text-dim); }
+    .chart-controls label { display:flex; gap:6px; align-items:center; font-family:var(--font-mono); font-size:.72rem; color:var(--text-dim); }
+    .chart-controls select { background:var(--bg-panel-alt); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:5px 8px; font-family:inherit; }
+    .spacer-grow { flex: 1 1 auto; }
+
+    /* ---------- Multi-select dropdown ---------- */
+    .msdropdown { position: relative; }
+    .msdropdown-btn { background: var(--bg-panel-alt); border: 1px solid var(--border-bright); color: var(--text); font-family: var(--font-mono); font-size: .72rem; padding: 7px 12px; border-radius: 4px; cursor: pointer; white-space: nowrap; }
+    .msdropdown-btn:hover { border-color: var(--copper); }
+    .msdropdown-panel { position: absolute; top: calc(100% + 6px); left: 0; z-index: 60; background: var(--bg-panel); border: 1px solid var(--border-bright); border-radius: 6px; padding: 6px; min-width: 190px; max-height: 240px; overflow-y: auto; box-shadow: 0 10px 26px rgba(0,0,0,.45); }
+    .msdropdown-panel[hidden] { display: none; }
+    .msdropdown-item { padding: 2px 4px; border-radius: 4px; }
+    .msdropdown-item:hover { background: var(--bg-panel-alt); }
+    .msdropdown-item label { display: flex; align-items: center; gap: 8px; width: 100%; cursor: pointer; font-family: var(--font-mono); font-size: .74rem; color: var(--text); padding: 4px 2px; }
+    .msdropdown-item input { accent-color: var(--teal); }
+    .msdropdown-divider { height: 1px; background: var(--border); margin: 4px 2px; }
+
+    /* ---------- Alarms / health ---------- */
+    .alarm-grid { display:grid; grid-template-columns:1fr; gap:8px; }
+    .alarm-card { border:1px solid var(--border); background:var(--bg-panel-alt); padding:10px; border-radius:4px; }
+    .alarm-card strong { font-family:var(--font-mono); font-size: .82rem; }
+    .alarm-card-fields { display:flex; gap:10px; flex-wrap:wrap; margin-top:6px; font-size:.72rem; }
+    .alarm-card input[type="number"] { width:74px; padding:5px; }
+    .alarm-active { border-color:#fb7185 !important; }
+    .alarm-banner { display:none; margin:0 0 12px; padding:10px 12px; border:1px solid #fb7185; color:#fecdd3; background:rgba(251,113,133,.08); border-radius:4px; font-family:var(--font-mono); font-size:.75rem; }
+    .alarm-banner.active { display:block; }
+    .health-grid { display:grid; grid-template-columns: 1fr 1fr; gap:8px; }
+    .health-chip { padding:8px 10px; border:1px solid var(--border); background:var(--bg-panel-alt); border-radius:4px; font-family:var(--font-mono); font-size:.68rem; }
+    .health-chip b { color:var(--copper-bright); display:block; margin-top:2px; font-size:.78rem; }
+    .export-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
+
+    /* ---------- Automation / scheduler / notes ---------- */
+    .form-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; margin-bottom: 14px; }
+    .data-table { width: 100%; border-collapse: collapse; font-size: .78rem; }
+    .data-table th { text-align: left; font-family: var(--font-mono); font-size: .68rem; color: var(--text-faint); text-transform: uppercase; letter-spacing: .04em; padding: 6px 8px; border-bottom: 1px solid var(--border-bright); }
+    .data-table td { padding: 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+    .data-table tr:last-child td { border-bottom: none; }
+    .days-picker { display: flex; gap: 4px; }
+    .day-toggle { width: 30px; height: 30px; border-radius: 4px; border: 1px solid var(--border-bright); background: var(--bg-panel-alt); color: var(--text-dim); font-family: var(--font-mono); font-size: .68rem; cursor: pointer; }
+    .day-toggle.active { background: var(--copper); color: #12100b; border-color: var(--copper); }
+
+    @media (prefers-reduced-motion: reduce) {
+        .led { animation: none !important; }
+        * { transition: none !important; }
+    }
+</style>
+</head>
+<body>
+<div class="modal-backdrop" id="login-modal">
+    <div class="auth-card">
+        <div class="auth-header">
+            <div class="auth-icon">
+                <svg viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                    <defs>
+                        <linearGradient id="authIconGrad" x1="0" y1="0" x2="40" y2="40">
+                            <stop offset="0" style="stop-color: var(--copper-bright)"/>
+                            <stop offset="1" style="stop-color: var(--teal)"/>
+                        </linearGradient>
+                    </defs>
+                    <rect x="10" y="10" width="20" height="20" rx="3" fill="none" stroke="url(#authIconGrad)" stroke-width="2"/>
+                    <circle cx="20" cy="20" r="3" fill="url(#authIconGrad)"/>
+                    <line x1="14" y1="4" x2="14" y2="10" stroke="url(#authIconGrad)" stroke-width="2"/>
+                    <line x1="20" y1="4" x2="20" y2="10" stroke="url(#authIconGrad)" stroke-width="2"/>
+                    <line x1="26" y1="4" x2="26" y2="10" stroke="url(#authIconGrad)" stroke-width="2"/>
+                    <line x1="14" y1="30" x2="14" y2="36" stroke="url(#authIconGrad)" stroke-width="2"/>
+                    <line x1="20" y1="30" x2="20" y2="36" stroke="url(#authIconGrad)" stroke-width="2"/>
+                    <line x1="26" y1="30" x2="26" y2="36" stroke="url(#authIconGrad)" stroke-width="2"/>
+                </svg>
+            </div>
+            <h2>Connect to your device</h2>
+            <p>// authentication required</p>
+        </div>
+
+        <div class="auth-field">
+            <label for="login-email">email</label>
+            <div class="auth-input-wrap">
+                <svg class="auth-input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3.5 6.5l8.5 6 8.5-6"/></svg>
+                <input type="email" id="login-email" autocomplete="username" placeholder="you@example.com" autofocus>
+            </div>
+        </div>
+
+        <div class="auth-field">
+            <label for="login-password">password</label>
+            <div class="auth-input-wrap has-toggle">
+                <svg class="auth-input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+                <input type="password" id="login-password" autocomplete="current-password" placeholder="••••••••">
+                <button type="button" class="auth-toggle-visibility" id="toggle-password" aria-label="Show password"></button>
+            </div>
+        </div>
+
+        <p class="auth-section-label">// firebase connection</p>
+
+        <div class="auth-field">
+            <label for="login-api-key">api key</label>
+            <div class="auth-input-wrap has-toggle">
+                <svg class="auth-input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7.5" cy="15.5" r="3.5"/><path d="M10.5 13 19 4.5"/><path d="M15.5 8 18 10.5"/><path d="M13 10.5 15 12.5"/></svg>
+                <input type="password" id="login-api-key" autocomplete="off" spellcheck="false" placeholder="AIzaSy...">
+                <button type="button" class="auth-toggle-visibility" id="toggle-api-key" aria-label="Show API key"></button>
+            </div>
+        </div>
+
+        <div class="auth-field">
+            <label for="login-api-url">database url</label>
+            <div class="auth-input-wrap">
+                <svg class="auth-input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v6c0 1.66 3.13 3 7 3s7-1.34 7-3V6"/><path d="M5 12v6c0 1.66 3.13 3 7 3s7-1.34 7-3v-6"/></svg>
+                <input type="text" id="login-api-url" autocomplete="off" spellcheck="false" placeholder="https://your-project.firebasedatabase.app/">
+            </div>
+        </div>
+
+        <p class="auth-error" id="login-error"></p>
+
+        <button type="button" class="auth-submit" id="login-btn">
+            <span class="auth-spinner"></span>
+            <span id="login-btn-text">Login to dashboard</span>
+        </button>
+
+        <p class="auth-privacy-note">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3Z"/><path d="M9 12l2 2 4-4"/></svg>
+            <span>Nothing here is saved. These four fields live only in this tab's memory and are gone when you close or reload the page.</span>
+        </p>
+    </div>
+</div>
+<div class="container">
+
+    <div class="app-header">
+        <div class="brand">
+            <svg class="brand-mark" viewBox="0 0 40 40" width="32" height="32" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <rect x="10" y="10" width="20" height="20" rx="2" stroke="currentColor" stroke-width="2"/>
+                <circle cx="20" cy="20" r="3" fill="currentColor"/>
+                <line x1="14" y1="4" x2="14" y2="10" stroke="currentColor" stroke-width="2"/>
+                <line x1="20" y1="4" x2="20" y2="10" stroke="currentColor" stroke-width="2"/>
+                <line x1="26" y1="4" x2="26" y2="10" stroke="currentColor" stroke-width="2"/>
+                <line x1="14" y1="30" x2="14" y2="36" stroke="currentColor" stroke-width="2"/>
+                <line x1="20" y1="30" x2="20" y2="36" stroke="currentColor" stroke-width="2"/>
+                <line x1="26" y1="30" x2="26" y2="36" stroke="currentColor" stroke-width="2"/>
+                <line x1="4" y1="14" x2="10" y2="14" stroke="currentColor" stroke-width="2"/>
+                <line x1="4" y1="26" x2="10" y2="26" stroke="currentColor" stroke-width="2"/>
+                <line x1="30" y1="14" x2="36" y2="14" stroke="currentColor" stroke-width="2"/>
+                <line x1="30" y1="26" x2="36" y2="26" stroke="currentColor" stroke-width="2"/>
+            </svg>
+            <div>
+                <h1>ESP32 Telemetry Console</h1>
+                <p class="brand-sub">Live sensor data, history &amp; remote control</p>
+            </div>
+        </div>
+        <div class="header-status">
+            <span class="freshness" id="freshness-badge" hidden></span>
+            <span class="clock" id="clock">--:--:--</span>
+            <span class="conn-pill">
+                <span class="led" id="conn-led"></span>
+                <span id="conn-text">Connecting…</span>
+            </span>
+            <button class="icon-btn" id="settings-btn" title="Session &amp; maintenance" aria-label="Session and maintenance">⚙</button>
+        </div>
+    </div>
+
+    <div class="tabs" role="tablist">
+        <button class="tab-btn active" id="tab-live" role="tab" aria-selected="true" data-tab="live">Live</button>
+        <button class="tab-btn" id="tab-history" role="tab" aria-selected="false" data-tab="history">History</button>
+        <button class="tab-btn" id="tab-automation" role="tab" aria-selected="false" data-tab="automation">Automation</button>
+    </div>
+
+    <div class="app-layout">
+        <main class="main-col">
+
+            <!-- ============ LIVE TAB ============ -->
+            <section class="tab-view" id="live-view">
+                <section class="panel">
+                    <h2 class="panel-title">// analog sensors <small>instantaneous reading, all channels</small></h2>
+                    <div class="stat-row" id="analog-stats"></div>
+                    <div class="chart-wrapper short"><canvas id="analogChart"></canvas></div>
+                </section>
+
+                <section class="panel">
+                    <h2 class="panel-title">// sensor trend (live)</h2>
+                    <div class="chart-controls" id="live-trend-controls">
+                        <div class="msdropdown" id="live-analog-select"></div>
+                        <label>Chart <select id="live-trend-type"><option value="line">Line</option><option value="area">Area</option><option value="bar">Bar</option></select></label>
+                        <label>X-axis <select id="live-trend-unit"><option value="ms">Millisecond</option><option value="s" selected>Second</option><option value="min">Minute</option><option value="h">Hour</option></select></label>
+                        <div class="spacer-grow"></div>
+                        <button type="button" class="btn-ghost btn-sm" id="live-trend-reset-zoom">Reset zoom</button>
+                        <button type="button" class="btn-ghost btn-sm" id="live-trend-export">Export PNG</button>
+                    </div>
+                    <div class="chart-wrapper"><canvas id="trendChart"></canvas></div>
+                    <p class="status-line" id="live-trend-status">Waiting for live data…</p>
+                </section>
+
+                <section class="panel">
+                    <h2 class="panel-title">// digital activity (live)</h2>
+                    <div class="chart-controls">
+                        <div class="msdropdown" id="live-digital-select"></div>
+                        <label>Transition <select id="live-event-transition"><option value="all">All</option><option value="rise">LOW→HIGH</option><option value="fall">HIGH→LOW</option></select></label>
+                        <label>Search <input id="live-event-search" type="search" placeholder="D22, HIGH…"></label>
+                    </div>
+                    <div class="grid-2">
+                        <div>
+                            <div class="chart-wrapper short"><canvas id="liveDigitalChart"></canvas></div>
+                        </div>
+                        <div>
+                            <ul class="event-log" id="event-log">
+                                <li class="event-empty">No transitions yet.</li>
+                            </ul>
+                        </div>
+                    </div>
+                </section>
+            </section>
+
+            <!-- ============ HISTORY TAB ============ -->
+            <section class="tab-view" id="history-view" hidden>
+                <section class="panel">
+                    <h2 class="panel-title">// time range</h2>
+                    <div class="quick-ranges">
+                        <button type="button" data-range="1">Last 1H</button>
+                        <button type="button" data-range="6">Last 6H</button>
+                        <button type="button" data-range="24">Last 24H</button>
+                        <button type="button" data-range="168">Last 7D</button>
+                    </div>
+                    <div class="range-inputs">
+                        <label class="field-label">Start
+                            <input type="datetime-local" id="start-time">
+                        </label>
+                        <label class="field-label">End
+                            <input type="datetime-local" id="end-time">
+                        </label>
+                        <button type="button" id="fetch-btn" class="btn-primary">Fetch</button>
+                    </div>
+                    <div class="export-actions">
+                        <button type="button" id="export-btn" class="btn-ghost" disabled>Export CSV</button>
+                        <button type="button" id="export-events-btn" class="btn-ghost" disabled>Events CSV</button>
+                        <button type="button" id="export-json-btn" class="btn-ghost" disabled>Export JSON</button>
+                        <button type="button" id="export-combined-btn" class="btn-ghost" disabled>Combined log</button>
+                    </div>
+                    <p class="status-line" id="history-status" aria-live="polite">Select a range to fetch stored readings.</p>
+                </section>
+
+                <section class="panel">
+                    <h2 class="panel-title">// sensor trend — selected range</h2>
+                    <div class="chart-controls" id="history-trend-controls">
+                        <div class="msdropdown" id="history-analog-select"></div>
+                        <label>Chart <select id="history-trend-type"><option value="line">Line</option><option value="area">Area</option><option value="bar">Bar</option></select></label>
+                        <label>X-axis <select id="history-trend-unit"><option value="ms">Millisecond</option><option value="s" selected>Second</option><option value="min">Minute</option><option value="h">Hour</option></select></label>
+                        <div class="spacer-grow"></div>
+                        <button type="button" class="btn-ghost btn-sm" id="history-trend-reset-zoom">Reset zoom</button>
+                        <button type="button" class="btn-ghost btn-sm" id="history-trend-export">Export PNG</button>
+                    </div>
+                    <div class="chart-wrapper"><canvas id="historyTrendChart"></canvas></div>
+                    <p class="status-line" id="history-trend-status">No history range selected.</p>
+                </section>
+
+                <section class="panel">
+                    <h2 class="panel-title">// digital activity — selected range</h2>
+                    <div class="chart-controls">
+                        <div class="msdropdown" id="history-digital-select"></div>
+                        <label>Transition <select id="history-event-transition"><option value="all">All</option><option value="rise">LOW→HIGH</option><option value="fall">HIGH→LOW</option></select></label>
+                        <label>Search <input id="history-event-search" type="search" placeholder="D22, HIGH…"></label>
+                    </div>
+                    <div class="grid-2">
+                        <div>
+                            <div class="chart-wrapper short"><canvas id="historyDigitalChart"></canvas></div>
+                        </div>
+                        <div>
+                            <ul class="event-log" id="history-event-log">
+                                <li class="event-empty">No transitions in selected range.</li>
+                            </ul>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="panel" id="replay-panel" hidden>
+                    <h2 class="panel-title">// replay</h2>
+                    <div class="replay-transport">
+                        <div class="transport-controls">
+                            <button type="button" id="play-btn" class="btn-icon" title="Play">▶</button>
+                            <button type="button" id="pause-btn" class="btn-icon" title="Pause">⏸</button>
+                            <button type="button" id="stop-btn" class="btn-icon" title="Stop and rewind">⏹</button>
+                            <input type="range" id="scrubber" class="scrubber" min="0" max="0" value="0" aria-label="Playback position">
+                            <select id="speed-control" aria-label="Playback speed">
+                                <option value="0.25">0.25× slow</option>
+                                <option value="0.5">0.5× slow</option>
+                                <option value="1" selected>1× realtime</option>
+                                <option value="2">2× fast</option>
+                                <option value="10">10× fast</option>
+                            </select>
+                        </div>
+                        <div class="transport-status">
+                            <span><strong>Frame:</strong> <span id="playback-time">—</span></span>
+                            <span><strong>Position:</strong> <span id="playback-progress">0 / 0</span></span>
+                        </div>
+                    </div>
+                </section>
+            </section>
+
+            <!-- ============ AUTOMATION TAB ============ -->
+            <section class="tab-view" id="automation-view" hidden>
+                <section class="panel">
+                    <h2 class="panel-title">// logging interval <small>datalogger sample rate</small></h2>
+                    <p class="status-line">Pushes a target sample interval to <code>/esp32/config/interval_ms</code>. Requires firmware support to take effect.</p>
+                    <div class="form-row">
+                        <label class="field-label">Interval (ms)
+                            <input type="number" id="interval-input" min="100" step="100" placeholder="e.g. 1000">
+                        </label>
+                        <button type="button" class="btn-primary" id="interval-save-btn">Save interval</button>
+                    </div>
+                    <p class="status-line" id="interval-status"></p>
+                </section>
+
+                <section class="panel">
+                    <h2 class="panel-title">// automation rules <small>closed-loop: analog channel → digital output</small></h2>
+                    <div class="form-row">
+                        <label class="field-label">Channel
+                            <select id="rule-channel"></select>
+                        </label>
+                        <label class="field-label">Condition
+                            <select id="rule-op">
+                                <option value=">">is above</option>
+                                <option value=">=">is at or above</option>
+                                <option value="<">is below</option>
+                                <option value="<=">is at or below</option>
+                            </select>
+                        </label>
+                        <label class="field-label">Threshold
+                            <input type="number" id="rule-threshold" placeholder="e.g. 2000">
+                        </label>
+                        <label class="field-label">Output pin
+                            <select id="rule-pin"></select>
+                        </label>
+                        <label class="field-label">Then set
+                            <select id="rule-then"><option value="HIGH">HIGH</option><option value="LOW">LOW</option></select>
+                        </label>
+                        <label class="field-label">Otherwise
+                            <select id="rule-else"><option value="">No change</option><option value="HIGH">HIGH</option><option value="LOW">LOW</option></select>
+                        </label>
+                        <button type="button" class="btn-primary" id="rule-add-btn">Add rule</button>
+                    </div>
+                    <table class="data-table">
+                        <thead><tr><th>Condition</th><th>Then</th><th>Otherwise</th><th>State</th><th></th></tr></thead>
+                        <tbody id="rules-body"><tr><td colspan="5" class="placeholder">No automation rules yet.</td></tr></tbody>
+                    </table>
+                </section>
+
+                <section class="panel">
+                    <h2 class="panel-title">// scheduler <small>time-of-day output control</small></h2>
+                    <div class="form-row">
+                        <label class="field-label">Output pin
+                            <select id="sched-pin"></select>
+                        </label>
+                        <label class="field-label">Turn ON at
+                            <input type="time" id="sched-on">
+                        </label>
+                        <label class="field-label">Turn OFF at
+                            <input type="time" id="sched-off">
+                        </label>
+                        <div class="field-label">Days
+                            <div class="days-picker" id="sched-days">
+                                <button type="button" class="day-toggle" data-day="1">Mo</button>
+                                <button type="button" class="day-toggle" data-day="2">Tu</button>
+                                <button type="button" class="day-toggle" data-day="3">We</button>
+                                <button type="button" class="day-toggle" data-day="4">Th</button>
+                                <button type="button" class="day-toggle" data-day="5">Fr</button>
+                                <button type="button" class="day-toggle" data-day="6">Sa</button>
+                                <button type="button" class="day-toggle" data-day="0">Su</button>
+                            </div>
+                        </div>
+                        <button type="button" class="btn-primary" id="sched-add-btn">Add schedule</button>
+                    </div>
+                    <table class="data-table">
+                        <thead><tr><th>Pin</th><th>On</th><th>Off</th><th>Days</th><th>State</th><th></th></tr></thead>
+                        <tbody id="schedules-body"><tr><td colspan="6" class="placeholder">No schedules yet.</td></tr></tbody>
+                    </table>
+                </section>
+
+                <section class="panel">
+                    <h2 class="panel-title">// annotations <small>timestamped notes on the log</small></h2>
+                    <div class="form-row">
+                        <label class="field-label" style="flex:1; min-width:220px;">Note
+                            <input type="text" id="note-input" placeholder="e.g. Recalibrated sensor A0">
+                        </label>
+                        <button type="button" class="btn-primary" id="note-add-btn">Log note now</button>
+                    </div>
+                    <ul class="event-log" id="notes-list"><li class="event-empty">No notes logged yet.</li></ul>
+                </section>
+            </section>
+
+        </main>
+
+        <aside class="side-col">
+            <section class="panel panel-compact">
+                <h2 class="panel-title">// system health</h2>
+                <div class="alarm-banner" id="alarm-banner" aria-live="assertive"></div>
+                <div class="health-grid">
+                    <div class="health-chip">Status<b id="health-status">—</b></div>
+                    <div class="health-chip">Uptime<b id="health-uptime">—</b></div>
+                    <div class="health-chip">Wi-Fi RSSI<b id="health-rssi">—</b></div>
+                    <div class="health-chip">IP<b id="health-ip">—</b></div>
+                    <div class="health-chip">Heap<b id="health-heap">—</b></div>
+                    <div class="health-chip">Heartbeat<b id="health-heartbeat">—</b></div>
+                    <div class="health-chip">Last data<b id="health-last-data">—</b></div>
+                    <div class="health-chip">Last write<b id="health-last-write">—</b></div>
+                </div>
+            </section>
+
+            <section class="panel panel-compact">
+                <h2 class="panel-title">// digital I/O &amp; control</h2>
+                <p class="status-line" id="control-status" aria-live="polite">Waiting for ESP32 state…</p>
+                <label class="confirm-toggle"><input type="checkbox" id="confirm-output-toggle" checked> Confirm output changes</label>
+                <div class="pin-grid" id="digital-io-grid"><p class="placeholder">Waiting for data…</p></div>
+
+                <h3 class="panel-subtitle">Analog outputs (DAC)</h3>
+                <div class="pin-grid" id="analog-control-container"><p class="placeholder">Connecting to analog controls…</p></div>
+
+                <div class="legend-row">
+                    <div class="legend-group"><span class="legend-label">OUT</span><span class="chip">D16</span><span class="chip">D17</span><span class="chip">D18</span><span class="chip">D19</span><span class="chip">D21</span></div>
+                    <div class="legend-group"><span class="legend-label">IN</span><span class="chip">D22</span><span class="chip">D23</span><span class="chip">D27</span></div>
+                    <div class="legend-group"><span class="legend-label">DAC</span><span class="chip">A25</span><span class="chip">A26</span></div>
+                </div>
+            </section>
+
+            <section class="panel panel-compact">
+                <h2 class="panel-title">// analog alarms</h2>
+                <p class="status-line">Optional LOW/HIGH thresholds, stored in this browser. Also drawn as reference lines on trend charts.</p>
+                <div class="alarm-grid" id="alarm-grid"><p class="placeholder">Waiting for analog channels…</p></div>
+            </section>
+        </aside>
+    </div>
+
+</div>
+
+<div class="modal-backdrop" id="settings-modal" hidden>
+    <div class="modal">
+        <h2 class="panel-title">// session &amp; maintenance</h2>
+        <p class="status-line" style="margin:0 0 16px;">Signed in as <strong id="session-email-label">—</strong>. Nothing about this connection is saved in the browser — reload the page to switch accounts or projects.</p>
+        <button type="button" class="btn-ghost" id="logout-btn" style="width:100%;margin-bottom:18px;">↺ Sign out &amp; reconnect</button>
+        <div style="padding-top:16px;border-top:1px solid var(--border);">
+            <div style="font-size:.78rem;color:var(--text-dim);margin-bottom:8px;">Database maintenance</div>
+            <button type="button" id="delete-esp32-btn" class="btn-ghost btn-danger" style="width:100%;">🗑 Delete all ESP32 database data</button>
+            <p class="status-line" style="font-size:.7rem;">Permanently deletes everything under <code>/esp32</code>, including history, events, controls and status. This cannot be undone.</p>
+        </div>
+        <div class="modal-actions" style="margin-top:16px;">
+            <div style="flex:1"></div>
+            <button type="button" class="btn-ghost" id="cfg-cancel">Close</button>
+        </div>
+    </div>
+</div>
+
+<script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+    import { getAuth, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+    import { getDatabase, ref, query, orderByChild, startAt, endAt, get, onValue, limitToLast, set, onChildAdded, remove } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+
+    const $ = (id) => document.getElementById(id);
+
+    // ============================================================
+    // 1. FIREBASE CONFIGURATION
+    // ============================================================
+    // Email, password, API key and database URL are collected from the
+    // login form only. Nothing is hardcoded and nothing is written to
+    // localStorage/sessionStorage — the Firebase app is created fresh,
+    // in memory, once the login form is submitted (see section 20).
+    let app, db, auth;
+
+    // ============================================================
+    // 2. PIN CONFIGURATION & STATE
+    // ============================================================
+    const controllablePins = [16, 17, 18, 19, 21];
+    const analogOutputPins = [25, 26];
+    const monitoredInputPins = [22, 23, 27];
+    const controlStates = {};
+    let commandStates = {};
+    let lastFirebaseWrite = null;
+    let lastDataReceived = null;
+    let lastDataTimestamp = null;
+    const lastDigitalState = {};
+
+    let historyData = [];
+    let liveListener = null;
+    let eventListener = null;
+    let statusListener = null;
+    let replayInterval = null;
+    let replayTimer = null;
+    let currentIndex = 0;
+    let isPlaying = false;
+
+    const liveBuffer = [];
+    const LIVE_BUFFER_MAX = 60;
+    const eventLog = [];
+    const EVENT_LOG_MAX = 20;
+    let historyEvents = [];
+    let historyRangeEvents = [];
+    let alarmEvents = [];
+    let notesLog = [];
+
+    let analogChannels = [];
+    let digitalChannels = [];
+    const liveAnalogSelected = new Set();
+    const historyAnalogSelected = new Set();
+    const liveDigitalSelected = new Set();
+    const historyDigitalSelected = new Set();
+    let liveTrendUnit = 's';
+    let historyTrendUnit = 's';
+    let liveChartType = 'line';
+    let historyChartType = 'line';
+
+    const alarmConfig = {};
+    const ANALOG_CHART_PALETTE = ['#ff6b35', '#00c2ff', '#a855f7', '#22c55e', '#f43f5e', '#eab308', '#14b8a6', '#ec4899'];
+    const DIGITAL_CHART_PALETTE = ['#ff3b30', '#007aff', '#af52de', '#34c759', '#ff9500', '#00c7be', '#5856d6', '#ff2d55'];
+
+    // ============================================================
+    // 3. GENERIC HELPERS
+    // ============================================================
+    function esc(v) { return String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+    function fmtDuration(sec) {
+        if (!Number.isFinite(sec)) return '—';
+        if (sec < 1) return `${Math.round(sec * 1000)} ms`; if (sec < 60) return `${sec.toFixed(2)} s`;
+        if (sec < 3600) return `${(sec / 60).toFixed(2)} min`; return `${(sec / 3600).toFixed(2)} h`;
+    }
+    function timestampMillis(value) {
+        const n = Number(value);
+        if (!Number.isFinite(n)) return NaN;
+        return n > 100000000000 ? n : n * 1000;
+    }
+    function timestampSeconds(value) { const ms = timestampMillis(value); return Number.isFinite(ms) ? ms / 1000 : NaN; }
+    function normalizeTimestamp(value) { let ts = Number(value); if (!Number.isFinite(ts)) return null; if (ts > 100000000000) ts = Math.floor(ts / 1000); return ts; }
+    function normalizeDigitalValue(value) { return Number(value) === 1 ? 1 : 0; }
+    function eventTimestampMs(v) { if (!v || typeof v !== 'object') return NaN; const raw = v.timestamp_ms ?? v.time_ms ?? v.timestamp ?? v.time ?? v.ts; return timestampMillis(raw); }
+    function axisLabel(ts, unit) {
+        const date = new Date(timestampMillis(ts));
+        if (unit === 'ms') return date.toISOString().substring(17, 23);
+        if (unit === 'min' || unit === 'h') return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    }
+    function firebaseDayKey(tsMs) { const d = new Date(Number(tsMs)); const p = n => String(n).padStart(2,'0'); return `${d.getUTCFullYear()}-${p(d.getUTCMonth()+1)}-${p(d.getUTCDate())}`; }
+    function firebaseDayKeysBetween(startTS, endTS) {
+        const out=[]; const d=new Date(startTS*1000); d.setUTCHours(0,0,0,0); const end=new Date(endTS*1000); end.setUTCHours(0,0,0,0);
+        while(d<=end && out.length<10){ out.push(firebaseDayKey(d.getTime())); d.setUTCDate(d.getUTCDate()+1); }
+        return out;
+    }
+    function downloadText(name,text,type){const blob=new Blob([text],{type});const u=URL.createObjectURL(blob);const a=document.createElement('a');a.href=u;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(u),500);}
+    function buildTimeSeries(snapshots) {
+        return (snapshots || []).filter(s => s && typeof s === 'object').map(s => {
+            const tsMs = Number.isFinite(Number(s.timestamp_ms)) ? Number(s.timestamp_ms) : timestampMillis(s.timestamp);
+            return { ...s, timestamp: tsMs / 1000, timestamp_ms: tsMs };
+        }).filter(s => Number.isFinite(s.timestamp)).sort((a, b) => a.timestamp - b.timestamp);
+    }
+
+    // ============================================================
+    // 4. MULTI-SELECT DROPDOWN COMPONENT (replaces checkbox rows)
+    // ============================================================
+    function createMultiSelect({ container, labelText, getOptions, selectedSet, onChange }) {
+        container.innerHTML = '';
+        const btn = document.createElement('button');
+        btn.type = 'button'; btn.className = 'msdropdown-btn';
+        const panel = document.createElement('div');
+        panel.className = 'msdropdown-panel'; panel.hidden = true;
+
+        function updateBtnLabel() {
+            const total = getOptions().length;
+            const n = selectedSet.size;
+            btn.textContent = `${labelText}: ${n === 0 ? 'All' : n + '/' + total} ▾`;
+        }
+        function renderPanel() {
+            const opts = getOptions();
+            panel.innerHTML = '';
+            const allRow = document.createElement('div'); allRow.className = 'msdropdown-item';
+            allRow.innerHTML = `<label><input type="checkbox" ${selectedSet.size === 0 ? 'checked' : ''}> <b>All channels</b></label>`;
+            allRow.querySelector('input').addEventListener('change', () => { selectedSet.clear(); renderPanel(); updateBtnLabel(); onChange(); });
+            panel.appendChild(allRow);
+            if (opts.length) { const div = document.createElement('div'); div.className = 'msdropdown-divider'; panel.appendChild(div); }
+            opts.forEach(opt => {
+                const row = document.createElement('div'); row.className = 'msdropdown-item';
+                row.innerHTML = `<label><input type="checkbox" value="${esc(opt)}" ${selectedSet.size === 0 || selectedSet.has(opt) ? 'checked' : ''}> ${esc(opt)}</label>`;
+                const cb = row.querySelector('input');
+                cb.addEventListener('change', () => {
+                    if (selectedSet.size === 0) opts.forEach(o => selectedSet.add(o));
+                    if (cb.checked) selectedSet.add(opt); else selectedSet.delete(opt);
+                    if (selectedSet.size === opts.length) selectedSet.clear();
+                    renderPanel(); updateBtnLabel(); onChange();
+                });
+                panel.appendChild(row);
+            });
+            if (!opts.length) { const p = document.createElement('p'); p.className = 'placeholder'; p.style.padding = '6px'; p.textContent = 'No channels yet.'; panel.appendChild(p); }
+        }
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const willOpen = panel.hidden;
+            document.querySelectorAll('.msdropdown-panel').forEach(p => p.hidden = true);
+            panel.hidden = !willOpen;
+            if (!panel.hidden) renderPanel();
+        });
+        document.addEventListener('click', (e) => { if (!container.contains(e.target)) panel.hidden = true; });
+        container.classList.add('msdropdown');
+        container.appendChild(btn); container.appendChild(panel);
+        updateBtnLabel();
+        return { refresh() { updateBtnLabel(); if (!panel.hidden) renderPanel(); } };
+    }
+
+    const liveAnalogDropdown = createMultiSelect({ container: $('live-analog-select'), labelText: 'Analog pins', getOptions: () => analogChannels, selectedSet: liveAnalogSelected, onChange: () => renderTrendChart(trendChart, liveBuffer, liveAnalogSelected, liveTrendUnit, liveChartType, 'live-trend-status') });
+    const historyAnalogDropdown = createMultiSelect({ container: $('history-analog-select'), labelText: 'Analog pins', getOptions: () => analogChannels, selectedSet: historyAnalogSelected, onChange: () => renderTrendChart(historyTrendChart, historyData, historyAnalogSelected, historyTrendUnit, historyChartType, 'history-trend-status') });
+    const liveDigitalDropdown = createMultiSelect({ container: $('live-digital-select'), labelText: 'Digital pins', getOptions: () => digitalChannels, selectedSet: liveDigitalSelected, onChange: () => { renderDigitalTimelineChart(liveDigitalChart, liveBuffer, liveDigitalSelected, liveTrendUnit); renderEventLog(); } });
+    const historyDigitalDropdown = createMultiSelect({ container: $('history-digital-select'), labelText: 'Digital pins', getOptions: () => digitalChannels, selectedSet: historyDigitalSelected, onChange: () => { renderDigitalTimelineChart(historyDigitalChart, historyData, historyDigitalSelected, historyTrendUnit); renderHistoryEventLog(); } });
+
+    function discoverSelectors(snapshots) {
+        const analog = new Set(), digital = new Set();
+        (snapshots || []).forEach(s => {
+            if (s && s.analog) Object.keys(s.analog).forEach(k => analog.add(k));
+            if (s && s.digital) Object.keys(s.digital).forEach(k => digital.add(k));
+        });
+        analogChannels = Array.from(analog).sort();
+        digitalChannels = Array.from(digital).sort();
+        [liveAnalogDropdown, historyAnalogDropdown, liveDigitalDropdown, historyDigitalDropdown].forEach(d => d.refresh());
+        buildAlarmCards();
+        populateRuleAndSchedulePinSelects();
+    }
+
+    // ============================================================
+    // 5. CHARTS
+    // ============================================================
+    const commonChartOptions = {
+        responsive: true, maintainAspectRatio: false, animation: { duration: 0 },
+        interaction: { mode: 'index', intersect: false },
+        elements: { point: { radius: 0, hitRadius: 10, hoverRadius: 5 }, line: { tension: 0.3, borderWidth: 2 } },
+        scales: {
+            y: { min: 0, max: 4095, position: 'right', ticks: { color: '#82998e', font: { family: 'IBM Plex Mono', size: 11 } }, grid: { color: 'rgba(69,216,196,.05)' } },
+            x: { ticks: { color: '#82998e', font: { family: 'IBM Plex Mono', size: 11 }, maxTicksLimit: 8 }, grid: { display: false } }
+        },
+        plugins: {
+            legend: { labels: { color: '#e7f2ec', font: { family: 'IBM Plex Mono', size: 11 } } },
+            tooltip: { backgroundColor: 'rgba(10, 24, 21, 0.95)', titleColor: '#d7a052', bodyColor: '#e7f2ec', borderColor: '#2e5c4c', borderWidth: 1, padding: 12, displayColors: true },
+            zoom: { pan: { enabled: true, mode: 'x' }, zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' } }
+        }
+    };
+    const digitalChartOptions = {
+        responsive: true, maintainAspectRatio: false, animation: { duration: 0 },
+        interaction: { mode: 'index', intersect: false },
+        elements: { point: { radius: 0, hitRadius: 10, hoverRadius: 4 }, line: { borderWidth: 2, tension: 0 } },
+        scales: {
+            y: { min: -0.15, max: 1.15, ticks: { color: '#82998e', font: { family: 'IBM Plex Mono', size: 10 }, stepSize: 1, callback: v => v === 1 ? 'HIGH' : (v === 0 ? 'LOW' : '') }, grid: { color: 'rgba(69,216,196,.05)' } },
+            x: { ticks: { color: '#82998e', font: { family: 'IBM Plex Mono', size: 11 }, maxTicksLimit: 8 }, grid: { display: false } }
+        },
+        plugins: {
+            legend: { labels: { color: '#e7f2ec', font: { family: 'IBM Plex Mono', size: 11 } } },
+            tooltip: { backgroundColor: 'rgba(10, 24, 21, 0.95)', titleColor: '#d7a052', bodyColor: '#e7f2ec', borderColor: '#2e5c4c', borderWidth: 1, padding: 12 },
+            zoom: { pan: { enabled: true, mode: 'x' }, zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' } }
+        }
+    };
+
+    const alarmLinePlugin = {
+        id: 'alarmLines',
+        afterDatasetsDraw(chart) {
+            const { ctx, chartArea, scales } = chart;
+            if (!chartArea || !scales.y) return;
+            chart.data.datasets.forEach(ds => {
+                const cfg = alarmConfig[ds.label]; if (!cfg || !cfg.enabled) return;
+                ['low', 'high'].forEach(k => {
+                    const val = Number(cfg[k]); if (!Number.isFinite(val)) return;
+                    const yPix = scales.y.getPixelForValue(val);
+                    if (yPix < chartArea.top || yPix > chartArea.bottom) return;
+                    ctx.save(); ctx.strokeStyle = ds.borderColor || '#fb7185'; ctx.globalAlpha = .55; ctx.setLineDash([4, 3]); ctx.lineWidth = 1;
+                    ctx.beginPath(); ctx.moveTo(chartArea.left, yPix); ctx.lineTo(chartArea.right, yPix); ctx.stroke(); ctx.restore();
+                });
+            });
+        }
+    };
+    const playheadPlugin = {
+        id: 'playhead',
+        afterDraw(chart) {
+            if (!historyData.length) return;
+            const xScale = chart.scales.x;
+            const idx = Math.min(currentIndex, historyData.length - 1);
+            if (idx < 0 || !xScale) return;
+            const x = xScale.getPixelForValue(idx);
+            if (!Number.isFinite(x)) return;
+            const { top, bottom } = chart.chartArea;
+            const c = chart.ctx;
+            c.save(); c.strokeStyle = '#f0c079'; c.lineWidth = 1.5; c.setLineDash([4, 3]);
+            c.beginPath(); c.moveTo(x, top); c.lineTo(x, bottom); c.stroke(); c.restore();
+        }
+    };
+
+    const analogChart = new Chart($('analogChart').getContext('2d'), {
+        type: 'bar',
+        data: { labels: [], datasets: [{ label: 'Analog reading (0–4095)', data: [], backgroundColor: 'rgba(215,160,82,0.55)', borderColor: '#d7a052', borderWidth: 1, borderRadius: 3 }] },
+        options: {
+            responsive: true, maintainAspectRatio: false, animation: false,
+            scales: { y: { min: 0, max: 4095, ticks: { color: '#82998e', font: { family: 'IBM Plex Mono', size: 11 } }, grid: { color: 'rgba(69,216,196,.05)' } }, x: { ticks: { color: '#82998e', font: { family: 'IBM Plex Mono', size: 11 } }, grid: { display: false } } },
+            plugins: { legend: { display: false } }
+        }
+    });
+    const trendChart = new Chart($('trendChart').getContext('2d'), { type: 'line', data: { labels: [], datasets: [] }, options: commonChartOptions, plugins: [alarmLinePlugin] });
+    const historyTrendChart = new Chart($('historyTrendChart').getContext('2d'), { type: 'line', data: { labels: [], datasets: [] }, options: commonChartOptions, plugins: [alarmLinePlugin, playheadPlugin] });
+    const liveDigitalChart = new Chart($('liveDigitalChart').getContext('2d'), { type: 'line', data: { labels: [], datasets: [] }, options: digitalChartOptions });
+    const historyDigitalChart = new Chart($('historyDigitalChart').getContext('2d'), { type: 'line', data: { labels: [], datasets: [] }, options: digitalChartOptions, plugins: [playheadPlugin] });
+
+    function exportChartPng(chart, filename) { const a = document.createElement('a'); a.href = chart.toBase64Image(); a.download = filename; a.click(); }
+
+    function renderTrendChart(chart, snapshots, selectedSet, unit, chartType, statusElId) {
+        const points = buildTimeSeries(snapshots);
+        if (!points.length) {
+            chart.data.labels = []; chart.data.datasets = []; chart.update('none');
+            if (statusElId) $(statusElId).textContent = 'No sensor data available.';
+            return;
+        }
+        const channelSet = new Set();
+        points.forEach(s => { if (s.analog && typeof s.analog === 'object') Object.keys(s.analog).forEach(k => channelSet.add(k)); });
+        const channels = Array.from(channelSet).sort().filter(ch => selectedSet.size === 0 || selectedSet.has(ch));
+        chart.data.labels = points.map(s => axisLabel(s.timestamp, unit));
+        chart.data.datasets = channels.map((ch, i) => {
+            const color = ANALOG_CHART_PALETTE[i % ANALOG_CHART_PALETTE.length];
+            return { label: ch, data: points.map(s => s.analog && s.analog[ch] !== undefined ? Number(s.analog[ch]) : null), borderColor: color, backgroundColor: color + '33', fill: chartType === 'area', spanGaps: true };
+        });
+        chart.config.type = chartType === 'bar' ? 'bar' : 'line';
+        chart.update('none');
+        if (statusElId) $(statusElId).textContent = `${points.length} readings • ${channels.length} channel${channels.length === 1 ? '' : 's'}`;
+    }
+
+    function renderDigitalTimelineChart(chart, snapshots, selectedSet, unit) {
+        const points = buildTimeSeries(snapshots);
+        if (!points.length) { chart.data.labels = []; chart.data.datasets = []; chart.update('none'); return; }
+        const pinSet = new Set();
+        points.forEach(s => { if (s.digital && typeof s.digital === 'object') Object.keys(s.digital).forEach(k => pinSet.add(k)); });
+        const pins = Array.from(pinSet).sort().filter(p => selectedSet.size === 0 || selectedSet.has(p));
+        chart.data.labels = points.map(s => axisLabel(s.timestamp, unit));
+        chart.data.datasets = pins.map((p, i) => ({
+            label: p,
+            data: points.map(s => s.digital && s.digital[p] !== undefined ? (Number(s.digital[p]) === 1 ? 1 : 0) : null),
+            borderColor: DIGITAL_CHART_PALETTE[i % DIGITAL_CHART_PALETTE.length], stepped: true, spanGaps: true, fill: false
+        }));
+        chart.update('none');
+    }
+
+    function computeAnalogStats(snapshots) {
+        const channels = {};
+        snapshots.forEach(s => { if (!s || !s.analog) return; Object.entries(s.analog).forEach(([ch, v]) => { (channels[ch] = channels[ch] || []).push(Number(v)); }); });
+        return Object.entries(channels).map(([ch, vals]) => ({ channel: ch, current: vals[vals.length - 1], min: Math.min(...vals), max: Math.max(...vals), avg: vals.reduce((a, b) => a + b, 0) / vals.length }));
+    }
+    function renderAnalogStatsFromSnapshots(snapshots) {
+        const row = $('analog-stats'); if (!row) return;
+        const stats = computeAnalogStats(snapshots);
+        if (!stats.length) { row.innerHTML = ''; return; }
+        row.innerHTML = stats.map(s => `
+            <div class="stat-chip">
+                <span class="stat-label">${esc(s.channel)}</span>
+                <span class="stat-value">${s.current}</span>
+                <div class="stat-mini-row">
+                    <span class="stat-mini"><b>min</b> ${s.min}</span>
+                    <span class="stat-mini"><b>max</b> ${s.max}</span>
+                    <span class="stat-mini"><b>avg</b> ${s.avg.toFixed(0)}</span>
+                </div>
+            </div>`).join('');
+    }
+
+    $('live-trend-reset-zoom').addEventListener('click', () => trendChart.resetZoom());
+    $('history-trend-reset-zoom').addEventListener('click', () => historyTrendChart.resetZoom());
+    $('live-trend-export').addEventListener('click', () => exportChartPng(trendChart, `live-trend-${Date.now()}.png`));
+    $('history-trend-export').addEventListener('click', () => exportChartPng(historyTrendChart, `history-trend-${Date.now()}.png`));
+    $('live-trend-type').addEventListener('change', (e) => { liveChartType = e.target.value; renderTrendChart(trendChart, liveBuffer, liveAnalogSelected, liveTrendUnit, liveChartType, 'live-trend-status'); });
+    $('history-trend-type').addEventListener('change', (e) => { historyChartType = e.target.value; renderTrendChart(historyTrendChart, historyData, historyAnalogSelected, historyTrendUnit, historyChartType, 'history-trend-status'); });
+    $('live-trend-unit').addEventListener('change', (e) => { liveTrendUnit = e.target.value; renderTrendChart(trendChart, liveBuffer, liveAnalogSelected, liveTrendUnit, liveChartType, 'live-trend-status'); renderDigitalTimelineChart(liveDigitalChart, liveBuffer, liveDigitalSelected, liveTrendUnit); });
+    $('history-trend-unit').addEventListener('change', (e) => { historyTrendUnit = e.target.value; renderTrendChart(historyTrendChart, historyData, historyAnalogSelected, historyTrendUnit, historyChartType, 'history-trend-status'); renderDigitalTimelineChart(historyDigitalChart, historyData, historyDigitalSelected, historyTrendUnit); });
+
+    // ============================================================
+    // 6. EVENT LOG (transitions)
+    // ============================================================
+    function decorateDurations(events) {
+        const sorted = (events || []).filter(Boolean).sort((a, b) => a.timestamp - b.timestamp); const lastHigh = {};
+        sorted.forEach(e => {
+            if (e.from !== undefined && e.from === 0 && e.value === 1) lastHigh[e.pin] = e.timestamp;
+            if (e.value === 0 && Number.isFinite(lastHigh[e.pin])) { e.duration = Number.isFinite(e.duration) ? e.duration : e.timestamp - lastHigh[e.pin]; delete lastHigh[e.pin]; }
+        });
+        return sorted;
+    }
+    function pushEvent(pin, value, timestamp, extra = {}) {
+        const tsMs = Number.isFinite(Number(extra.timestamp_ms)) ? Number(extra.timestamp_ms) : (timestamp ? timestamp * 1000 : Date.now());
+        eventLog.unshift({ key: extra.key || `${pin}_${tsMs}_${value}`, pin, value, from: extra.from, time: new Date(tsMs), timestamp: tsMs / 1000, timestamp_ms: tsMs, duration: extra.duration });
+        if (eventLog.length > EVENT_LOG_MAX) eventLog.pop();
+        renderEventLog();
+    }
+    function renderEventList(listId, events, selectedSet, transitionSelId, searchSelId) {
+        const list = $(listId); if (!list) return;
+        const mode = $(transitionSelId)?.value || 'all', q = ($(searchSelId)?.value || '').trim().toLowerCase();
+        const filtered = decorateDurations(events).filter(e => {
+            if (selectedSet && selectedSet.size && !selectedSet.has(e.pin)) return false;
+            if (mode === 'rise' && !(e.value === 1 && e.from === 0)) return false;
+            if (mode === 'fall' && !(e.value === 0 && e.from === 1)) return false;
+            if (q && !(`${e.pin} ${e.value ? 'HIGH' : 'LOW'} ${e.from === 1 ? 'HIGH' : 'LOW'}`).toLowerCase().includes(q)) return false;
+            return true;
+        }).slice(-EVENT_LOG_MAX).reverse();
+        if (!filtered.length) { list.innerHTML = '<li class="event-empty">No matching transitions.</li>'; return; }
+        list.innerHTML = filtered.map(e => `<li class="event-row ${e.value === 1 ? 'high' : 'low'}"><span class="event-time">${e.time.toLocaleTimeString([], { hour12: false })}</span><span class="event-pin">${esc(e.pin)}</span><span class="event-val">${e.from !== undefined ? (e.from ? 'HIGH' : 'LOW') + ' → ' : ''}${e.value ? 'HIGH' : 'LOW'}</span><span class="event-meta">${Number.isFinite(e.duration) ? 'duration ' + fmtDuration(e.duration) : ''}</span></li>`).join('');
+    }
+    function renderEventLog() { renderEventList('event-log', eventLog, liveDigitalSelected, 'live-event-transition', 'live-event-search'); }
+
+    function buildHistoryTransitions(snapshots) {
+        const sorted = snapshots.filter(s => s && typeof s === 'object').map(s => {
+            const raw = Number.isFinite(Number(s.timestamp_ms)) ? Number(s.timestamp_ms) : timestampMillis(s.timestamp);
+            return { ...s, timestamp: Number.isFinite(raw) ? raw / 1000 : null, timestamp_ms: raw };
+        }).filter(s => s.timestamp !== null).sort((a, b) => a.timestamp - b.timestamp);
+        const previous = {}; const transitions = [];
+        sorted.forEach(s => {
+            if (!s.digital || typeof s.digital !== 'object') return;
+            Object.entries(s.digital).forEach(([pin, rawValue]) => {
+                const value = normalizeDigitalValue(rawValue);
+                if (previous[pin] !== undefined && previous[pin] !== value) transitions.push({ pin, value, from: previous[pin], timestamp: s.timestamp, time: new Date(s.timestamp * 1000) });
+                previous[pin] = value;
+            });
+        });
+        return transitions;
+    }
+    function renderHistoryEventLog() {
+        const events = historyRangeEvents.length ? historyRangeEvents : (historyEvents.length ? historyEvents : buildHistoryTransitions(historyData));
+        renderEventList('history-event-log', events, historyDigitalSelected, 'history-event-transition', 'history-event-search');
+    }
+    ['live-event-transition', 'live-event-search'].forEach(id => $(id)?.addEventListener('input', renderEventLog));
+    ['history-event-transition', 'history-event-search'].forEach(id => $(id)?.addEventListener('input', renderHistoryEventLog));
+
+    function normalizeEventRecord(v, key) {
+        if (!v || typeof v !== 'object') return null;
+        const tsMs = eventTimestampMs(v); const pin = v.pin || v.digitalPin || v.name; if (!pin || !Number.isFinite(tsMs)) return null;
+        const to = normalizeDigitalValue(v.to ?? v.value ?? v.state); const from = v.from === undefined ? undefined : normalizeDigitalValue(v.from);
+        const durationRaw = v.duration_ms !== undefined ? Number(v.duration_ms) / 1000 : Number(v.duration);
+        return { key, pin: String(pin), from, value: to, timestamp: tsMs / 1000, timestamp_ms: tsMs, time: new Date(tsMs), duration: durationRaw };
+    }
+    function startDedicatedEventListener() {
+        if (eventListener) eventListener();
+        try {
+            const todayKey = firebaseDayKey(Date.now()); const eventsRef = query(ref(db, `/esp32/events/${todayKey}`), limitToLast(100));
+            eventListener = onChildAdded(eventsRef, snap => {
+                const e = normalizeEventRecord(snap.val(), snap.key); if (!e) return;
+                historyEvents.push(e); historyEvents = decorateDurations(historyEvents).slice(-300);
+                // Dedicated events are authoritative for short digital pulses and
+                // must also appear in the Live event log.
+                window._logStartTime = window._logStartTime || Date.now();
+                if (e.timestamp_ms >= window._logStartTime && !eventLog.some(x => x.key === e.key || (
+                    x.pin === e.pin && x.timestamp_ms === e.timestamp_ms && x.value === e.value
+                ))) {
+                    eventLog.unshift({ ...e, key: e.key });
+                    if (eventLog.length > EVENT_LOG_MAX) eventLog.pop();
+                    renderEventLog();
+                }
+            });
+        } catch (e) { console.warn('Dedicated event stream unavailable', e); }
+    }
+    async function fetchDedicatedEvents(startTS, endTS) {
+        try {
+            const out = [];
+            for (const dayKey of firebaseDayKeysBetween(startTS, endTS)) {
+                const eventsQuery = query(ref(db, `/esp32/events/${dayKey}`), orderByChild('timestamp'), startAt(startTS), endAt(endTS));
+                const snap = await get(eventsQuery); snap.forEach(ch => { const e = normalizeEventRecord(ch.val(), `${dayKey}/${ch.key}`); if (e && e.timestamp >= startTS && e.timestamp <= endTS) out.push(e); });
+            }
+            return decorateDurations(out);
+        } catch (e) { return []; }
+    }
+
+    // ============================================================
+    // 7. UNIFIED DIGITAL I/O GRID (replaces 3 duplicate pin grids)
+    // ============================================================
+    function buildOutputCard(pin) {
+        const value = controlStates[pin] ? 1 : 0;
+        const card = document.createElement('div'); card.className = 'ctrl-card';
+        const name = document.createElement('span'); name.className = 'ctrl-name'; name.textContent = `D${pin}`;
+        const state = document.createElement('span'); state.className = `ctrl-state ${value ? 'on' : 'off'}`; state.textContent = value ? 'ON • ACTUAL' : 'OFF • ACTUAL';
+        const cmd = document.createElement('span'); cmd.className = 'ctrl-command'; cmd.textContent = commandStates[pin] === undefined ? 'CMD: —' : `CMD: ${commandStates[pin] ? 'HIGH' : 'LOW'} • pending`;
+        const toggle = document.createElement('button'); toggle.type = 'button'; toggle.className = `dip-toggle ${value ? 'on' : 'off'}`;
+        toggle.setAttribute('aria-pressed', String(!!value)); toggle.setAttribute('aria-label', `Toggle D${pin}`); toggle.innerHTML = '<span class="dip-knob"></span>';
+        toggle.addEventListener('click', async () => {
+            const target = value ? 0 : 1;
+            if ($('confirm-output-toggle')?.checked && !window.confirm(`Set D${pin} ${target ? 'HIGH' : 'LOW'}?`)) return;
+            toggle.disabled = true; commandStates[pin] = target; card.classList.add('pending');
+            $('control-status').textContent = `Sending D${pin} → ${target ? 'HIGH' : 'LOW'}...`;
+            try { await set(ref(db, `/esp32/control/command/D${pin}`), target); lastFirebaseWrite = Date.now(); $('health-last-write').textContent = new Date(lastFirebaseWrite).toLocaleTimeString(); $('control-status').textContent = `Command sent to D${pin}. Waiting for actual state…`; }
+            catch (error) { delete commandStates[pin]; $('control-status').textContent = `D${pin} command failed: ${error.message}`; }
+            finally { toggle.disabled = false; if (commandStates[pin] === target && controlStates[pin] !== target) card.classList.add('pending'); else card.classList.remove('pending'); }
+        });
+        card.appendChild(name); card.appendChild(toggle); card.appendChild(state); card.appendChild(cmd);
+        return card;
+    }
+    function buildInputCard(pinLabel, value, role) {
+        const card = document.createElement('div'); card.className = `pin-card ${value ? 'high' : 'low'}`;
+        card.innerHTML = `<span class="pin-name">${esc(pinLabel)}</span><span class="pin-state">${value ? 'HIGH' : 'LOW'}</span><span class="pin-role">${esc(role)}</span>`;
+        return card;
+    }
+    function renderDigitalGrid(data) {
+        const grid = $('digital-io-grid'); if (!grid) return;
+        grid.innerHTML = '';
+        const seen = new Set();
+        controllablePins.forEach(pin => { seen.add(`D${pin}`); grid.appendChild(buildOutputCard(pin)); });
+        monitoredInputPins.forEach(pin => { seen.add(`D${pin}`); const v = controlStates[`IN${pin}`] ? 1 : 0; grid.appendChild(buildInputCard(`D${pin}`, v, 'INPUT')); });
+        if (data && data.digital) {
+            Object.keys(data.digital).sort().forEach(label => {
+                if (seen.has(label)) return;
+                const v = Number(data.digital[label]) === 1 ? 1 : 0;
+                grid.appendChild(buildInputCard(label, v, 'MONITOR'));
+            });
+        }
+        const onCount = controllablePins.filter(pin => controlStates[pin]).length;
+        $('control-status').textContent = `ESP32 connected state: ${onCount} / ${controllablePins.length} outputs ON`;
+    }
+
+    function renderAnalogControls() {
+        const container = $('analog-control-container'); container.innerHTML = '';
+        analogOutputPins.forEach(pin => {
+            const value = Number(controlStates[`A${pin}`] || 0);
+            const card = document.createElement('div'); card.className = 'analog-card';
+            const title = document.createElement('strong'); title.className = 'ctrl-name'; title.textContent = `GPIO${pin} DAC`;
+            const slider = document.createElement('input'); slider.type = 'range'; slider.className = 'analog-slider'; slider.min = '0'; slider.max = '255'; slider.step = '1'; slider.value = String(value); slider.setAttribute('aria-label', `Analog output GPIO ${pin}`);
+            const valueText = document.createElement('div'); valueText.className = 'analog-value'; valueText.textContent = `${value} / 255 (${(value * 3.3 / 255).toFixed(2)} V approx.)`;
+            let sendTimer = null;
+            slider.addEventListener('input', () => {
+                const v = Number(slider.value); valueText.textContent = `${v} / 255 (${(v * 3.3 / 255).toFixed(2)} V approx.)`;
+                clearTimeout(sendTimer);
+                sendTimer = setTimeout(async () => {
+                    try { await set(ref(db, `/esp32/control/command/A${pin}`), v); lastFirebaseWrite = Date.now(); if ($('health-last-write')) $('health-last-write').textContent = new Date(lastFirebaseWrite).toLocaleTimeString(); $('control-status').textContent = `Analog GPIO${pin} command sent: ${v}/255.`; }
+                    catch (error) { $('control-status').textContent = `GPIO${pin} command failed: ${error.message}`; }
+                }, 120);
+            });
+            card.appendChild(title); card.appendChild(slider); card.appendChild(valueText); container.appendChild(card);
+        });
+    }
+
+    function startControlListener() {
+        onValue(ref(db, '/esp32/control/state'), snapshot => {
+            const data = snapshot.val() || {};
+            controllablePins.forEach(pin => { controlStates[pin] = Number(data[`D${pin}`]) === 1 ? 1 : 0; if (commandStates[pin] !== undefined && commandStates[pin] === controlStates[pin]) delete commandStates[pin]; });
+            analogOutputPins.forEach(pin => { controlStates[`A${pin}`] = Number(data[`A${pin}`] || 0); });
+            renderDigitalGrid(lastTelemetrySnapshot); renderAnalogControls();
+        });
+        onValue(ref(db, '/esp32/control/input'), snapshot => {
+            const data = snapshot.val() || {};
+            monitoredInputPins.forEach(pin => { controlStates[`IN${pin}`] = Number(data[`D${pin}`]) === 1 ? 1 : 0; });
+            renderDigitalGrid(lastTelemetrySnapshot);
+        });
+    }
+
+    // ============================================================
+    // 8. ALARMS
+    // ============================================================
+    function loadAlarmSettings() { try { Object.assign(alarmConfig, JSON.parse(localStorage.getItem('esp32_alarm_config') || '{}')); } catch (e) {} }
+    function saveAlarmSettings() {
+        document.querySelectorAll('[data-alarm-enable]').forEach(el => { const ch = el.dataset.alarmEnable; alarmConfig[ch] = alarmConfig[ch] || {}; alarmConfig[ch].enabled = el.checked; });
+        document.querySelectorAll('[data-alarm-low]').forEach(el => { const ch = el.dataset.alarmLow; alarmConfig[ch] = alarmConfig[ch] || {}; alarmConfig[ch].low = el.value; });
+        document.querySelectorAll('[data-alarm-high]').forEach(el => { const ch = el.dataset.alarmHigh; alarmConfig[ch] = alarmConfig[ch] || {}; alarmConfig[ch].high = el.value; });
+        localStorage.setItem('esp32_alarm_config', JSON.stringify(alarmConfig));
+        renderTrendChart(trendChart, liveBuffer, liveAnalogSelected, liveTrendUnit, liveChartType, 'live-trend-status');
+        renderTrendChart(historyTrendChart, historyData, historyAnalogSelected, historyTrendUnit, historyChartType, 'history-trend-status');
+    }
+    function buildAlarmCards() {
+        const grid = $('alarm-grid'); if (!grid) return;
+        if (!analogChannels.length) { grid.innerHTML = '<p class="placeholder">Waiting for analog channels…</p>'; return; }
+        grid.innerHTML = analogChannels.map(ch => {
+            const c = alarmConfig[ch] || { low: '', high: '', enabled: false };
+            return `<div class="alarm-card" id="alarm-${esc(ch).replace(/[^a-zA-Z0-9_-]/g, '_')}">
+                <strong>${esc(ch)}</strong>
+                <div class="alarm-card-fields">
+                    <label><input type="checkbox" data-alarm-enable="${esc(ch)}" ${c.enabled ? 'checked' : ''}> enable</label>
+                    <label>LOW <input type="number" min="0" max="4095" data-alarm-low="${esc(ch)}" value="${esc(c.low)}"></label>
+                    <label>HIGH <input type="number" min="0" max="4095" data-alarm-high="${esc(ch)}" value="${esc(c.high)}"></label>
+                </div>
+            </div>`;
+        }).join('');
+        grid.querySelectorAll('input').forEach(inp => inp.addEventListener('change', saveAlarmSettings));
+    }
+    function checkAlarms(data) {
+        if (!data || !data.analog) return;
+        const active = [];
+        Object.entries(data.analog).forEach(([ch, raw]) => {
+            const v = Number(raw), c = alarmConfig[ch]; if (!c || !c.enabled || !Number.isFinite(v)) return;
+            if (c.low !== '' && Number.isFinite(Number(c.low)) && v < Number(c.low)) active.push(`${ch} LOW (${v} < ${c.low})`);
+            if (c.high !== '' && Number.isFinite(Number(c.high)) && v > Number(c.high)) active.push(`${ch} HIGH (${v} > ${c.high})`);
+        });
+        const b = $('alarm-banner'); if (!b) return; const now = Date.now();
+        active.forEach(message => { if (!alarmEvents.length || alarmEvents[0].message !== message || now - (alarmEvents[0].ts || 0) > 1000) alarmEvents.unshift({ time: new Date(now), ts: now, message }); });
+        alarmEvents = alarmEvents.slice(0, 200);
+        if ($('export-combined-btn')) $('export-combined-btn').disabled = !(historyData.length || historyRangeEvents.length || alarmEvents.length);
+        b.classList.toggle('active', active.length > 0); b.textContent = active.length ? '⚠ ALARM: ' + active.join(' • ') : '';
+        document.querySelectorAll('.alarm-card').forEach(c => c.classList.remove('alarm-active'));
+        active.forEach(a => { const ch = a.split(' ')[0]; const id = 'alarm-' + ch.replace(/[^a-zA-Z0-9_-]/g, '_'); $(id)?.classList.add('alarm-active'); });
+    }
+
+    // ============================================================
+    // 9. AUTOMATION RULES (analog channel → digital output)
+    // ============================================================
+    let automationRules = [];
+    function loadAutomationRules() { try { automationRules = JSON.parse(localStorage.getItem('esp32_automation_rules') || '[]'); } catch (e) { automationRules = []; } }
+    async function saveAutomationRules() {
+        const clean = automationRules.map(({ _pending, ...r }) => r);
+        localStorage.setItem('esp32_automation_rules', JSON.stringify(clean));
+        renderRulesList();
+        try {
+            const obj = {};
+            clean.forEach(r => {
+                obj[r.id] = {
+                    channel: r.channel, op: r.op, threshold: Number(r.threshold),
+                    pin: Number(r.pin), thenAction: r.thenAction,
+                    elseAction: r.elseAction || '', enabled: !!r.enabled
+                };
+            });
+            await set(ref(db, '/esp32/automation/rules'), obj);
+        } catch (e) {
+            console.warn('Automation rules Firebase sync failed:', e);
+        }
+    }
+    function populateRuleAndSchedulePinSelects() {
+        const chSel = $('rule-channel'); if (chSel) { const cur = chSel.value; chSel.innerHTML = analogChannels.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('') || '<option value="">No channels yet</option>'; if (analogChannels.includes(cur)) chSel.value = cur; }
+        [$('rule-pin'), $('sched-pin')].forEach(sel => { if (!sel) return; const cur = sel.value; sel.innerHTML = controllablePins.map(p => `<option value="${p}">D${p}</option>`).join(''); if (cur) sel.value = cur; });
+    }
+    function renderRulesList() {
+        const body = $('rules-body'); if (!body) return;
+        if (!automationRules.length) { body.innerHTML = '<tr><td colspan="5" class="placeholder">No automation rules yet.</td></tr>'; return; }
+        body.innerHTML = automationRules.map(r => `
+            <tr>
+                <td>${esc(r.channel)} ${esc(r.op)} ${esc(r.threshold)}</td>
+                <td>D${esc(r.pin)} → ${esc(r.thenAction)}</td>
+                <td>${r.elseAction ? '→ ' + esc(r.elseAction) : '—'}</td>
+                <td><label class="confirm-toggle"><input type="checkbox" data-rule-toggle="${r.id}" ${r.enabled ? 'checked' : ''}> ${r.enabled ? 'Enabled' : 'Disabled'}</label></td>
+                <td><button type="button" class="btn-ghost btn-sm" data-rule-delete="${r.id}">Delete</button></td>
+            </tr>`).join('');
+        body.querySelectorAll('[data-rule-toggle]').forEach(cb => cb.addEventListener('change', () => { const r = automationRules.find(x => x.id === cb.dataset.ruleToggle); if (r) { r.enabled = cb.checked; saveAutomationRules(); } }));
+        body.querySelectorAll('[data-rule-delete]').forEach(btn => btn.addEventListener('click', () => { automationRules = automationRules.filter(x => x.id !== btn.dataset.ruleDelete); saveAutomationRules(); }));
+    }
+    $('rule-add-btn').addEventListener('click', () => {
+        const channel = $('rule-channel').value; const threshold = Number($('rule-threshold').value);
+        if (!channel) { alert('No analog channels discovered yet.'); return; }
+        if (!Number.isFinite(threshold)) { alert('Enter a numeric threshold.'); return; }
+        automationRules.push({ id: 'r' + Date.now(), channel, op: $('rule-op').value, threshold, pin: Number($('rule-pin').value), thenAction: $('rule-then').value, elseAction: $('rule-else').value || null, enabled: true });
+        $('rule-threshold').value = ''; saveAutomationRules();
+    });
+    function evaluateAutomationRules(analog) {
+        automationRules.forEach(r => {
+            if (!r.enabled) return;
+            const v = Number(analog[r.channel]); if (!Number.isFinite(v)) return;
+            let cond = false;
+            if (r.op === '>') cond = v > r.threshold; else if (r.op === '>=') cond = v >= r.threshold;
+            else if (r.op === '<') cond = v < r.threshold; else if (r.op === '<=') cond = v <= r.threshold;
+            let desired = null;
+            if (cond) desired = r.thenAction === 'HIGH' ? 1 : 0;
+            else if (r.elseAction) desired = r.elseAction === 'HIGH' ? 1 : 0;
+            if (desired === null) return;
+            if (controlStates[r.pin] === desired) return;
+            if (r._pending === desired) return;
+            r._pending = desired;
+            set(ref(db, `/esp32/control/command/D${r.pin}`), desired).catch(() => {}).finally(() => { r._pending = undefined; });
+        });
+    }
+
+    // ============================================================
+    // 10. SCHEDULER (time-of-day output control)
+    // ============================================================
+    let schedules = [];
+    const scheduleDaySelection = new Set();
+    function loadSchedules() { try { schedules = JSON.parse(localStorage.getItem('esp32_schedules') || '[]'); } catch (e) { schedules = []; } }
+    async function saveSchedules() {
+        const clean = schedules.map(({ _lastTrigger, ...s }) => s);
+        localStorage.setItem('esp32_schedules', JSON.stringify(clean));
+        renderSchedulesList();
+        try {
+            const obj = {};
+            const tzOffsetMin = -new Date().getTimezoneOffset();
+            clean.forEach(s => {
+                obj[s.id] = {
+                    pin: Number(s.pin), on: s.on || '', off: s.off || '',
+                    days: (s.days || []).map(Number).join(','),
+                    enabled: !!s.enabled, tzOffsetMin
+                };
+            });
+            await set(ref(db, '/esp32/automation/schedules'), obj);
+        } catch (e) {
+            console.warn('Schedules Firebase sync failed:', e);
+        }
+    }
+    $('sched-days').querySelectorAll('.day-toggle').forEach(btn => btn.addEventListener('click', () => {
+        const d = btn.dataset.day; btn.classList.toggle('active'); btn.classList.contains('active') ? scheduleDaySelection.add(d) : scheduleDaySelection.delete(d);
+    }));
+    function renderSchedulesList() {
+        const body = $('schedules-body'); if (!body) return;
+        if (!schedules.length) { body.innerHTML = '<tr><td colspan="6" class="placeholder">No schedules yet.</td></tr>'; return; }
+        const dayNames = { 0: 'Su', 1: 'Mo', 2: 'Tu', 3: 'We', 4: 'Th', 5: 'Fr', 6: 'Sa' };
+        body.innerHTML = schedules.map(s => `
+            <tr>
+                <td>D${esc(s.pin)}</td>
+                <td>${esc(s.on || '—')}</td>
+                <td>${esc(s.off || '—')}</td>
+                <td>${(s.days && s.days.length ? s.days.map(d => dayNames[d]).join(' ') : 'Every day')}</td>
+                <td><label class="confirm-toggle"><input type="checkbox" data-sched-toggle="${s.id}" ${s.enabled ? 'checked' : ''}> ${s.enabled ? 'Enabled' : 'Disabled'}</label></td>
+                <td><button type="button" class="btn-ghost btn-sm" data-sched-delete="${s.id}">Delete</button></td>
+            </tr>`).join('');
+        body.querySelectorAll('[data-sched-toggle]').forEach(cb => cb.addEventListener('change', () => { const s = schedules.find(x => x.id === cb.dataset.schedToggle); if (s) { s.enabled = cb.checked; saveSchedules(); } }));
+        body.querySelectorAll('[data-sched-delete]').forEach(btn => btn.addEventListener('click', () => { schedules = schedules.filter(x => x.id !== btn.dataset.schedDelete); saveSchedules(); }));
+    }
+    $('sched-add-btn').addEventListener('click', () => {
+        const pin = Number($('sched-pin').value); const on = $('sched-on').value; const off = $('sched-off').value;
+        if (!on && !off) { alert('Set at least an ON or OFF time.'); return; }
+        schedules.push({ id: 's' + Date.now(), pin, on: on || null, off: off || null, days: Array.from(scheduleDaySelection).map(Number), enabled: true });
+        $('sched-on').value = ''; $('sched-off').value = ''; scheduleDaySelection.clear();
+        $('sched-days').querySelectorAll('.day-toggle').forEach(b => b.classList.remove('active'));
+        saveSchedules();
+    });
+    function evaluateSchedules() {
+        if (!schedules.length) return;
+        const now = new Date(); const hm = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0'); const day = now.getDay();
+        const minuteKey = now.toISOString().slice(0, 16);
+        schedules.forEach(s => {
+            if (!s.enabled) return;
+            if (s.days && s.days.length && !s.days.includes(day)) return;
+            if (s.on === hm && s._lastTrigger !== minuteKey + 'on') { s._lastTrigger = minuteKey + 'on'; set(ref(db, `/esp32/control/command/D${s.pin}`), 1).catch(() => {}); }
+            if (s.off === hm && s._lastTrigger !== minuteKey + 'off') { s._lastTrigger = minuteKey + 'off'; set(ref(db, `/esp32/control/command/D${s.pin}`), 0).catch(() => {}); }
+        });
+    }
+
+    // ============================================================
+    // 11. AUTOMATION CONFIG SYNC
+    // ============================================================
+    // Automation is persisted in Firebase as well as localStorage. This means
+    // the ESP32 can execute rules/schedules even when this page is closed.
+    function startAutomationConfigListener() {
+        onValue(ref(db, '/esp32/automation/rules'), snap => {
+            const obj = snap.val();
+            if (!obj || typeof obj !== 'object') return;
+            automationRules = Object.entries(obj).map(([id, r]) => ({
+                id, channel: String(r.channel || ''), op: String(r.op || '>'),
+                threshold: Number(r.threshold), pin: Number(r.pin),
+                thenAction: String(r.thenAction || 'HIGH'),
+                elseAction: r.elseAction ? String(r.elseAction) : null,
+                enabled: r.enabled !== false
+            })).filter(r => r.channel && Number.isFinite(r.threshold) && Number.isFinite(r.pin));
+            localStorage.setItem('esp32_automation_rules', JSON.stringify(automationRules));
+            renderRulesList();
+        });
+
+        onValue(ref(db, '/esp32/automation/schedules'), snap => {
+            const obj = snap.val();
+            if (!obj || typeof obj !== 'object') return;
+            schedules = Object.entries(obj).map(([id, s]) => ({
+                id, pin: Number(s.pin), on: s.on || null, off: s.off || null,
+                days: typeof s.days === 'string'
+                    ? s.days.split(',').filter(Boolean).map(Number)
+                    : (Array.isArray(s.days) ? s.days.map(Number) : []),
+                enabled: s.enabled !== false
+            })).filter(s => Number.isFinite(s.pin));
+            localStorage.setItem('esp32_schedules', JSON.stringify(schedules));
+            renderSchedulesList();
+        });
+    }
+
+    // ============================================================
+    // 11. LOGGING INTERVAL CONTROL
+    // ============================================================
+    $('interval-save-btn').addEventListener('click', () => {
+        const v = Number($('interval-input').value);
+        if (!Number.isFinite(v) || v <= 0) { $('interval-status').textContent = 'Enter a valid interval in milliseconds.'; return; }
+        set(ref(db, '/esp32/config/interval_ms'), v)
+            .then(() => { $('interval-status').textContent = `Saved — device should pick up ${v} ms on its next config check.`; })
+            .catch(err => { $('interval-status').textContent = `Failed: ${err.message}`; });
+    });
+    onValue(ref(db, '/esp32/config/interval_ms'), snap => { const v = snap.val(); if (Number.isFinite(Number(v)) && document.activeElement !== $('interval-input')) $('interval-input').value = v; });
+
+    // ============================================================
+    // 12. ANNOTATIONS / NOTES
+    // ============================================================
+    function renderNotesList() {
+        const list = $('notes-list'); if (!list) return;
+        if (!notesLog.length) { list.innerHTML = '<li class="event-empty">No notes logged yet.</li>'; return; }
+        list.innerHTML = notesLog.map(n => `<li class="event-row"><span class="event-time">${new Date(n.ts).toLocaleString()}</span><span class="event-val">${esc(n.text)}</span></li>`).join('');
+    }
+    $('note-add-btn').addEventListener('click', async () => {
+        const text = $('note-input').value.trim(); if (!text) return;
+        const ts = Date.now(); const dayKey = firebaseDayKey(ts);
+        try { await set(ref(db, `/esp32/notes/${dayKey}/${ts}`), { text, timestamp_ms: ts }); $('note-input').value = ''; }
+        catch (e) { notesLog.unshift({ text, ts }); renderNotesList(); alert('Could not sync note to Firebase (saved locally instead): ' + e.message); }
+    });
+    function startNotesListener() {
+        try {
+            const dayKey = firebaseDayKey(Date.now());
+            onChildAdded(ref(db, `/esp32/notes/${dayKey}`), snap => {
+                const v = snap.val(); if (!v) return;
+                if (notesLog.some(n => n.ts === v.timestamp_ms)) return;
+                notesLog.unshift({ text: v.text, ts: v.timestamp_ms || Date.now() }); notesLog = notesLog.slice(0, 50); renderNotesList();
+            });
+        } catch (e) { /* ignore */ }
+    }
+
+    // ============================================================
+    // 13. SYSTEM HEALTH & CONNECTION
+    // ============================================================
+    function startStatusListener() {
+        if (statusListener) statusListener();
+        try {
+            statusListener = onValue(ref(db, '/esp32/status'), snap => {
+                const v = snap.val() || {};
+                $('health-status').textContent = v.online === false ? 'OFFLINE' : 'ONLINE';
+                $('health-uptime').textContent = v.uptime !== undefined ? fmtDuration(Number(v.uptime)) : '—';
+                $('health-rssi').textContent = v.rssi !== undefined ? `${v.rssi} dBm` : '—';
+                $('health-ip').textContent = v.ip || '—'; $('health-heap').textContent = v.freeHeap !== undefined ? v.freeHeap : '—';
+                const ts = Number.isFinite(Number(v.timestamp_ms)) ? Number(v.timestamp_ms) : timestampMillis(v.timestamp);
+                $('health-heartbeat').textContent = Number.isFinite(ts) ? new Date(ts).toLocaleTimeString() : 'now';
+                $('health-status').dataset.lastHeartbeat = String(ts);
+            });
+        } catch (e) {}
+    }
+    function startConnectionMonitor() {
+        onValue(ref(db, '.info/connected'), (snap) => {
+            const connected = snap.val() === true; const led = $('conn-led');
+            led.classList.toggle('led-online', connected); led.classList.toggle('led-offline', !connected); $('conn-text').textContent = connected ? 'Connected' : 'Offline';
+        });
+    }
+    function tickClock() { $('clock').textContent = new Date().toLocaleTimeString([], { hour12: false }); evaluateSchedules(); }
+    function tickFreshness() {
+        const badge = $('freshness-badge');
+        if (lastDataTimestamp == null) { badge.hidden = true; return; }
+        const deltaS = Math.max(0, Math.floor(Date.now() / 1000 - lastDataTimestamp)); badge.hidden = false;
+        badge.textContent = deltaS < 60 ? `Updated ${deltaS}s ago` : `Updated ${Math.floor(deltaS / 60)}m ago`; badge.classList.toggle('stale', deltaS > 20);
+        const hb = Number($('health-status')?.dataset.lastHeartbeat);
+        if (Number.isFinite(hb)) { const age = Date.now() - hb; $('health-status').textContent = age > 12000 ? 'OFFLINE' : 'ONLINE'; }
+    }
+
+    // ============================================================
+    // 14. MAIN TELEMETRY DISPLAY (shared by live stream + replay)
+    // ============================================================
+    let lastTelemetrySnapshot = null;
+    function updateUI(data, opts = {}) {
+        const isLive = opts.isLive !== false;
+        if (!data) return;
+        if (isLive) { lastTelemetrySnapshot = data; lastDataReceived = Date.now(); if ($('health-last-data')) $('health-last-data').textContent = new Date(lastDataReceived).toLocaleTimeString(); }
+        renderDigitalGrid(data);
+        if (data.digital && isLive) {
+            Object.entries(data.digital).forEach(([pinLabel, value]) => {
+                const nv = Number(value) === 1 ? 1 : 0; const prev = lastDigitalState[pinLabel];
+                if (prev !== undefined && prev !== nv) pushEvent(pinLabel, nv, data.timestamp, { timestamp_ms: data.timestamp_ms, from: prev });
+                lastDigitalState[pinLabel] = nv;
+            });
+        }
+        if (data.analog) {
+            analogChart.data.labels = Object.keys(data.analog); analogChart.data.datasets[0].data = Object.values(data.analog); analogChart.update();
+            if (isLive) evaluateAutomationRules(data.analog);
+        }
+        if (isLive) checkAlarms(data);
+        const ms = Number.isFinite(Number(data.timestamp_ms)) ? Number(data.timestamp_ms) : timestampMillis(data.timestamp);
+        if (Number.isFinite(ms)) {
+            if (isLive) lastDataTimestamp = ms / 1000;
+            $('playback-time') && ($('playback-time').textContent = new Date(ms).toLocaleString());
+        }
+    }
+
+    // ============================================================
+    // 15. REPLAY CONTROLS
+    // ============================================================
+    function renderFrame(index) {
+        currentIndex = index; updateUI(historyData[index], { isLive: false });
+        $('scrubber').value = String(index); $('playback-progress').textContent = `${index + 1} / ${historyData.length}`;
+        historyTrendChart.update('none'); historyDigitalChart.update('none');
+    }
+    function updatePlayState() { $('play-btn').classList.toggle('active', isPlaying); $('pause-btn').classList.toggle('active', !isPlaying); }
+    function stopPlayback() { if (replayInterval) clearInterval(replayInterval); replayInterval = null; if (replayTimer) clearTimeout(replayTimer); replayTimer = null; isPlaying = false; updatePlayState(); }
+    function playReplay() {
+        if (!historyData.length) return; stopPlayback(); if (currentIndex >= historyData.length) currentIndex = 0;
+        isPlaying = true; updatePlayState(); const speed = Number($('speed-control').value) || 1;
+        const step = () => {
+            if (!isPlaying || currentIndex >= historyData.length) { stopPlayback(); return; }
+            renderFrame(currentIndex); const cur = historyData[currentIndex], next = historyData[currentIndex + 1]; currentIndex++;
+            if (!next) { stopPlayback(); return; }
+            const t1 = timestampMillis(cur.timestamp_ms ?? cur.timestamp), t2 = timestampMillis(next.timestamp_ms ?? next.timestamp);
+            replayTimer = setTimeout(step, Math.max(20, Math.min(5000, ((t2 - t1) || 500) / speed)));
+        };
+        step();
+    }
+    $('play-btn').addEventListener('click', playReplay); $('pause-btn').addEventListener('click', stopPlayback);
+    $('stop-btn').addEventListener('click', () => { stopPlayback(); if (historyData.length > 0) renderFrame(0); });
+    $('speed-control').addEventListener('change', () => { if (isPlaying) playReplay(); });
+    $('scrubber').addEventListener('input', () => { if (!historyData.length) return; stopPlayback(); renderFrame(Number($('scrubber').value)); });
+    document.addEventListener('keydown', (e) => {
+        if (!$('history-view') || $('history-view').hidden) return; if (['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
+        if (e.code === 'Space') { e.preventDefault(); if (isPlaying) stopPlayback(); else playReplay(); }
+    });
+
+    // ============================================================
+    // 16. LIVE STREAM (always-on, independent of active tab)
+    // ============================================================
+    let liveDayRefreshTimer = null;
+    function startLiveDayRefreshTimer() {
+        if (liveDayRefreshTimer) clearInterval(liveDayRefreshTimer);
+        liveDayRefreshTimer = setInterval(() => {
+            const key = firebaseDayKey(Date.now());
+            if (window.__liveFirebaseDay !== key) { window.__liveFirebaseDay = key; startLiveStream(); startDedicatedEventListener(); startNotesListener(); }
+        }, 60000);
+    }
+    function startLiveStream() {
+        window.__liveFirebaseDay = firebaseDayKey(Date.now());
+        const todayKey = window.__liveFirebaseDay;
+        if (liveListener) liveListener();
+        const recentRef = query(ref(db, `/esp32/history/${todayKey}`), limitToLast(LIVE_BUFFER_MAX));
+        liveListener = onValue(recentRef, (snapshot) => {
+            const rows = []; snapshot.forEach((child) => { const value = child.val(); if (value && typeof value === 'object') rows.push(value); });
+            if (!rows.length) return;
+            rows.sort((a, b) => (timestampMillis(a.timestamp_ms ?? a.timestamp) || 0) - (timestampMillis(b.timestamp_ms ?? b.timestamp) || 0));
+            discoverSelectors(rows);
+            liveBuffer.length = 0;
+            rows.slice(-LIVE_BUFFER_MAX).forEach(r => {
+                const ms = Number.isFinite(Number(r.timestamp_ms)) ? Number(r.timestamp_ms) : timestampMillis(r.timestamp);
+                if (!Number.isFinite(ms)) return;
+                liveBuffer.push({ timestamp: ms / 1000, timestamp_ms: ms, digital: r.digital ? { ...r.digital } : undefined, analog: r.analog ? { ...r.analog } : undefined });
+            });
+            renderTrendChart(trendChart, liveBuffer, liveAnalogSelected, liveTrendUnit, liveChartType, 'live-trend-status');
+            renderDigitalTimelineChart(liveDigitalChart, liveBuffer, liveDigitalSelected, liveTrendUnit);
+            renderAnalogStatsFromSnapshots(liveBuffer);
+            updateUI(rows[rows.length - 1], { isLive: true });
+            renderEventLog();
+        });
+        startLiveDayRefreshTimer();
+    }
+
+    // ============================================================
+    // 17. TAB SWITCHING (view-only — live stream keeps running)
+    // ============================================================
+    function setActiveTab(name) {
+        ['live', 'history', 'automation'].forEach(t => {
+            $(`tab-${t}`).classList.toggle('active', t === name);
+            $(`tab-${t}`).setAttribute('aria-selected', String(t === name));
+            $(`${t}-view`).hidden = t !== name;
+        });
+        if (name === 'live') { trendChart.resize(); trendChart.update('none'); liveDigitalChart.resize(); liveDigitalChart.update('none'); analogChart.resize(); }
+        if (name === 'history') { historyTrendChart.resize(); historyTrendChart.update('none'); historyDigitalChart.resize(); historyDigitalChart.update('none'); }
+    }
+    $('tab-live').addEventListener('click', () => setActiveTab('live'));
+    $('tab-history').addEventListener('click', () => {
+        setActiveTab('history');
+        $('history-status').textContent = historyData.length ? `${historyData.length} snapshots loaded.` : 'Select a range to fetch stored readings.';
+    });
+    $('tab-automation').addEventListener('click', () => setActiveTab('automation'));
+
+    // ============================================================
+    // 18. HISTORY FETCH
+    // ============================================================
+    function toLocalInputValue(date) { const pad = (n) => String(n).padStart(2, '0'); return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`; }
+    document.querySelectorAll('.quick-ranges button').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const hours = Number(btn.dataset.range); const end = new Date(); const start = new Date(end.getTime() - hours * 3600 * 1000);
+            $('start-time').value = toLocalInputValue(start); $('end-time').value = toLocalInputValue(end); fetchHistory();
+        });
+    });
+    async function fetchHistory() {
+        const startStr = $('start-time').value; const endStr = $('end-time').value;
+        if (!startStr || !endStr) { $('history-status').textContent = 'Select both a start and end time.'; return; }
+        const startTS = Math.floor(new Date(startStr).getTime() / 1000); const endTS = Math.floor(new Date(endStr).getTime() / 1000);
+        stopPlayback(); $('fetch-btn').disabled = true; $('export-btn').disabled = true; $('history-status').textContent = 'Fetching…';
+        try {
+            historyData = []; const dayKeys = firebaseDayKeysBetween(startTS, endTS);
+            for (const dayKey of dayKeys) {
+                const historyQuery = query(ref(db, `/esp32/history/${dayKey}`), orderByChild('timestamp'), startAt(startTS), endAt(endTS));
+                const snapshot = await get(historyQuery);
+                snapshot.forEach((child) => {
+                    const item = child.val(); if (!item || typeof item !== 'object') return;
+                    const ts = Number(item.timestamp); if (!Number.isFinite(ts) || ts < startTS || ts > endTS) return;
+                    historyData.push({ ...item, timestamp: Number.isFinite(Number(item.timestamp_ms)) ? Number(item.timestamp_ms) / 1000 : ts, timestamp_ms: Number.isFinite(Number(item.timestamp_ms)) ? Number(item.timestamp_ms) : ts * 1000 });
+                });
+            }
+            historyData.sort((a, b) => Number(a.timestamp) - Number(b.timestamp));
+        } catch (error) { $('history-status').textContent = `Fetch failed: ${error.message}`; $('fetch-btn').disabled = false; return; }
+        $('fetch-btn').disabled = false;
+        discoverSelectors(historyData);
+        if (historyData.length === 0) {
+            $('history-status').textContent = 'No snapshots found in that range.'; $('replay-panel').hidden = true;
+            renderTrendChart(historyTrendChart, [], historyAnalogSelected, historyTrendUnit, historyChartType, 'history-trend-status');
+            renderDigitalTimelineChart(historyDigitalChart, [], historyDigitalSelected, historyTrendUnit);
+            historyRangeEvents = []; renderHistoryEventLog();
+            $('export-events-btn').disabled = true; $('export-json-btn').disabled = true; return;
+        }
+        historyRangeEvents = await fetchDedicatedEvents(startTS, endTS);
+        $('history-status').textContent = `${historyData.length} snapshots • ${historyRangeEvents.length} exact digital events loaded.`;
+        $('replay-panel').hidden = false;
+        renderTrendChart(historyTrendChart, historyData, historyAnalogSelected, historyTrendUnit, historyChartType, 'history-trend-status');
+        renderDigitalTimelineChart(historyDigitalChart, historyData, historyDigitalSelected, historyTrendUnit);
+        renderHistoryEventLog();
+        $('scrubber').max = String(historyData.length - 1); renderFrame(0);
+        $('export-btn').disabled = false; $('export-events-btn').disabled = historyRangeEvents.length === 0; $('export-combined-btn').disabled = historyData.length === 0; $('export-json-btn').disabled = false;
+    }
+    $('fetch-btn').addEventListener('click', fetchHistory);
+    $('export-btn').addEventListener('click', () => {
+        if (!historyData.length) return;
+        const digitalKeys = new Set(); const analogKeys = new Set();
+        historyData.forEach(s => { if (s.digital) Object.keys(s.digital).forEach(k => digitalKeys.add(k)); if (s.analog) Object.keys(s.analog).forEach(k => analogKeys.add(k)); });
+        const dCols = Array.from(digitalKeys); const aCols = Array.from(analogKeys); const header = ['timestamp', 'iso_time', ...dCols, ...aCols];
+        const rows = historyData.map(s => {
+            const iso = s.timestamp ? new Date(s.timestamp * 1000).toISOString() : '';
+            const dVals = dCols.map(k => (s.digital && s.digital[k] !== undefined) ? s.digital[k] : '');
+            const aVals = aCols.map(k => (s.analog && s.analog[k] !== undefined) ? s.analog[k] : '');
+            return [s.timestamp ?? '', iso, ...dVals, ...aVals].join(',');
+        });
+        downloadText(`esp32-history-${Date.now()}.csv`, [header.join(','), ...rows].join('\n'), 'text/csv');
+    });
+    $('export-events-btn').addEventListener('click', () => {
+        const ev = historyRangeEvents.length ? historyRangeEvents : (historyEvents.length ? historyEvents : buildHistoryTransitions(historyData));
+        const rows = [['timestamp', 'iso_time', 'pin', 'state', 'duration_ms'], ...decorateDurations(ev).map(e => [e.timestamp, new Date(e.timestamp * 1000).toISOString(), e.pin, e.value ? 'HIGH' : 'LOW', Number.isFinite(e.duration) ? Math.round(e.duration * 1000) : ''])];
+        downloadText(`esp32-events-${Date.now()}.csv`, rows.map(r => r.map(x => `"${String(x).replace(/"/g, '""')}"`).join(',')).join('\n'), 'text/csv');
+    });
+    $('export-json-btn').addEventListener('click', () => downloadText(`esp32-history-${Date.now()}.json`, JSON.stringify({ snapshots: historyData, events: historyRangeEvents.length ? historyRangeEvents : historyEvents }, null, 2), 'application/json'));
+    $('export-combined-btn').addEventListener('click', () => {
+        const ev = historyRangeEvents.length ? historyRangeEvents : historyEvents, rows = [['time', 'type', 'pin', 'from', 'to', 'duration_s', 'analog']];
+        historyData.forEach(x => rows.push([new Date(timestampMillis(x.timestamp_ms ?? x.timestamp)).toISOString(), 'sensor', '', '', '', '', JSON.stringify(x.analog || {})]));
+        decorateDurations(ev).forEach(e => rows.push([e.time.toISOString(), 'digital', e.pin, e.from === undefined ? '' : (e.from ? 'HIGH' : 'LOW'), e.value ? 'HIGH' : 'LOW', Number.isFinite(e.duration) ? e.duration.toFixed(3) : '', '']));
+        alarmEvents.forEach(a => rows.push([a.time.toISOString(), 'alarm', a.pin || '', '', a.message || '', '', '']));
+        downloadText(`esp32-combined-${Date.now()}.csv`, rows.map(r => r.map(x => `"${String(x).replace(/"/g, '""')}"`).join(',')).join('\n'), 'text/csv');
+    });
+
+    // ============================================================
+    // 19. SETTINGS MODAL & DB MAINTENANCE
+    // ============================================================
+    $('settings-btn').addEventListener('click', () => {
+        $('session-email-label').textContent = (auth && auth.currentUser && auth.currentUser.email) || '—';
+        $('settings-modal').hidden = false;
+    });
+    $('cfg-cancel').addEventListener('click', () => { $('settings-modal').hidden = true; });
+    $('settings-modal').addEventListener('click', (e) => { if (e.target === $('settings-modal')) $('settings-modal').hidden = true; });
+    $('logout-btn').addEventListener('click', async () => {
+        try { if (auth) await signOut(auth); } catch (e) { console.warn('Sign-out error:', e); }
+        location.reload();
+    });
+    $('delete-esp32-btn')?.addEventListener('click', async () => {
+        const password = prompt('Enter the deletion password:'); if (password === null) return;
+        if (password !== '9896323890aA@') { alert('Incorrect password. Database was NOT deleted.'); return; }
+        if (!confirm('DELETE ALL ESP32 DATA?\n\nThis permanently removes /esp32, including history, events, controls and status.')) return;
+        if (!confirm('FINAL CONFIRMATION\n\nErase everything under /esp32 now? This cannot be undone.')) return;
+        const btn = $('delete-esp32-btn'); btn.disabled = true; btn.textContent = 'Deleting…';
+        try { await remove(ref(db, '/esp32')); alert('ESP32 database data deleted successfully.'); historyData = []; alarmEvents = []; eventLog.length = 0; liveBuffer.length = 0; $('settings-modal').hidden = true; }
+        catch (err) { console.error(err); alert('Delete failed: ' + (err?.message || err)); } finally { btn.disabled = false; btn.textContent = '🗑 Delete all ESP32 database data'; }
+    });
+
+    // ============================================================
+// ============================================================
+// ============================================================
+// ============================================================
+// ============================================================
+// 20. BOOTSTRAP & AUTHENTICATION
+// ============================================================
+// Email, password, API key and database URL are read from the form at the
+// moment Login is clicked and are never written to localStorage,
+// sessionStorage, or anywhere else on disk. They exist only as local
+// variables / a Firebase app instance for the lifetime of this tab.
+const loginModal = $('login-modal');
+const loginBtn = $('login-btn');
+const loginBtnText = $('login-btn-text');
+const loginError = $('login-error');
+let dashboardStarted = false;
+
+const EYE_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>';
+const EYE_OFF_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3l18 18"/><path d="M10.6 10.6a3 3 0 0 0 4.24 4.24"/><path d="M6.5 6.7C4 8.3 2 12 2 12s3.5 7 10 7c1.8 0 3.4-.4 4.7-1.1"/><path d="M17.7 17.7C20 16 22 12 22 12s-1.2-2.4-3.4-4.4"/></svg>';
+
+function wireVisibilityToggle(btnId, inputId) {
+    const btn = $(btnId), input = $(inputId);
+    if (!btn || !input) return;
+    btn.innerHTML = EYE_ICON;
+    btn.addEventListener('click', () => {
+        const willShow = input.type === 'password';
+        input.type = willShow ? 'text' : 'password';
+        btn.innerHTML = willShow ? EYE_OFF_ICON : EYE_ICON;
+        btn.setAttribute('aria-label', willShow ? 'Hide' : 'Show');
+    });
+}
+wireVisibilityToggle('toggle-password', 'login-password');
+wireVisibilityToggle('toggle-api-key', 'login-api-key');
+
+function setLoginStatus(message, kind) {
+    loginError.textContent = message || '';
+    loginError.classList.remove('is-error', 'is-success', 'is-info');
+    if (kind) loginError.classList.add('is-' + kind);
+}
+
+function setLoginBusy(busy, label) {
+    loginBtn.disabled = busy;
+    loginBtn.classList.toggle('is-busy', busy);
+    loginBtnText.textContent = label || 'Login to dashboard';
+}
+
+function startDashboard() {
+    if (dashboardStarted) return;
+    dashboardStarted = true;
+    loadAlarmSettings(); loadAutomationRules(); loadSchedules();
+    renderRulesList(); renderSchedulesList(); renderNotesList();
+    tickClock(); setInterval(tickClock, 1000); setInterval(tickFreshness, 1000);
+    startConnectionMonitor(); startControlListener(); startStatusListener(); startAutomationConfigListener();
+    startLiveStream(); startDedicatedEventListener(); startNotesListener();
+}
+
+async function attemptLogin() {
+    const email = $('login-email').value.trim();
+    const password = $('login-password').value;
+    const apiKey = $('login-api-key').value.trim();
+    const databaseURL = $('login-api-url').value.trim();
+
+    if (!email || !password || !apiKey || !databaseURL) {
+        setLoginStatus('Fill in email, password, API key and database URL.', 'error');
+        return;
+    }
+
+    setLoginBusy(true, 'Connecting…');
+    setLoginStatus('Connecting to Firebase…', 'info');
+
+    try {
+        // A uniquely named app per attempt means nothing here can be
+        // restored by Firebase's own persistence after a page reload,
+        // and retries never collide with a previous attempt's instance.
+        app = initializeApp({ apiKey, databaseURL }, 'session-' + Date.now());
+        db = getDatabase(app);
+        auth = getAuth(app);
+    } catch (err) {
+        console.error('Firebase init failed:', err);
+        setLoginStatus('Could not connect: ' + (err?.message || err), 'error');
+        setLoginBusy(false);
+        return;
+    }
+
+    setLoginBusy(true, 'Authenticating…');
+    try {
+        await signInWithEmailAndPassword(auth, email, password);
+        setLoginStatus('Success! Loading dashboard…', 'success');
+        loginModal.hidden = true;
+        startDashboard();
+    } catch (error) {
+        console.error('Firebase login failed:', error);
+        let msg = error.message || 'Unknown authentication error.';
+        if (error.code === 'auth/invalid-credential') msg = 'Invalid email or password.';
+        if (error.code === 'auth/invalid-api-key') msg = 'Invalid API key.';
+        if (error.code === 'auth/user-not-found') msg = 'No account found for that email.';
+        if (error.code === 'auth/network-request-failed') msg = 'Network error. Check your internet connection.';
+        setLoginStatus('Login failed: ' + msg, 'error');
+        setLoginBusy(false);
+    }
+}
+
+loginBtn.addEventListener('click', attemptLogin);
+
+['login-email', 'login-password', 'login-api-key', 'login-api-url'].forEach((id) => {
+    $(id).addEventListener('keypress', (e) => { if (e.key === 'Enter') attemptLogin(); });
+});
+</script>
+</body>
+</html>
